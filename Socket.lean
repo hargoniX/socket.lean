@@ -227,6 +227,7 @@ def IPv6Addr.mk (h1 h2 h3 h4 h5 h6 h7 h8 : UInt16) : IPv6Addr := Id.run do
 
 alloy c section
 -- TODO: temporary until Mac fixes the malloc invocation in the lines below
+typedef struct sockaddr sockaddr;
 typedef struct sockaddr_in sockaddr_in;
 typedef struct sockaddr_in6 sockaddr_in6;
 
@@ -353,5 +354,94 @@ def recv (socket : Socket) (maxBytes : USize) : IO ByteArray := {
       return lean_io_result_mk_ok(buf);
   }
 }
+
+alloy c extern "lean_socket_bind"
+def bind (socket : Socket) (addr : SockAddr) : IO Unit := {
+  int fd = *lean_to_socket(socket);
+  int tag = lean_obj_tag(addr);
+  int err = 0;
+  struct sockaddr* sa = (struct sockaddr *)(lean_to_sockaddr_in(lean_ctor_get(addr, 0)));
+
+  switch (tag) {
+    case 0:
+      err = bind(fd, sa, sizeof(sockaddr_in));
+      break;
+    case 1:
+      err = bind(fd, sa, sizeof(sockaddr_in6));
+      break;
+    default:
+      return lean_panic_fn(lean_box(0), lean_mk_string("illegal C value"));
+  }
+
+  if (err < 0) {
+    return lean_io_result_mk_error(lean_decode_io_error(errno, NULL));
+  } else {
+    return lean_io_result_mk_ok(lean_box(0));
+  }
+}
+
+alloy c extern "lean_socket_listen"
+def listen (socket : Socket) (backlog : UInt32) : IO Unit := {
+  int fd = *lean_to_socket(socket);
+  if (listen(fd, backlog) < 0) {
+    return lean_io_result_mk_error(lean_decode_io_error(errno, NULL));
+  } else {
+    return lean_io_result_mk_ok(lean_box(0));
+  }
+}
+
+alloy c extern "lean_socket_accept"
+def accept (socket : Socket) : IO (Socket × SockAddr) := {
+  int saSize;
+
+  int fd = *lean_to_socket(socket);
+  int* newFd = malloc(sizeof(int));
+  struct sockaddr* sa = malloc(sizeof(sockaddr));
+
+  *newFd = accept(fd, sa, &saSize);
+
+  if (*newFd < 0) {
+    free(newFd);
+    return lean_io_result_mk_error(lean_decode_io_error(errno, NULL));
+  } else {
+    lean_object* pair = lean_alloc_ctor(0, 2, 0);
+    lean_ctor_set(pair, 0, socket_to_lean(newFd));
+    lean_object* leanSa;
+    switch (sa->sa_family) {
+      case AF_INET:
+        leanSa = lean_alloc_ctor(0, 1, 0);
+        lean_ctor_set(leanSa, 0, sockaddr_in_to_lean((struct sockaddr_in*)sa));
+        break;
+      case AF_INET6:
+        leanSa = lean_alloc_ctor(1, 1, 0);
+        lean_ctor_set(leanSa, 0, sockaddr_in6_to_lean((struct sockaddr_in6*)sa));
+        break;
+      default:
+        return lean_panic_fn(lean_box(0), lean_mk_string("accept only supports INET and INET6 right now"));
+    }
+    lean_ctor_set(pair, 1, leanSa);
+    return lean_io_result_mk_ok(pair);
+  }
+}
+
+
+/-
+DONE:
+- socket(2)
+- close(2)
+- connect(2)
+- recv(2)
+- send(2)
+- bind(2)
+- listen(2)
+- accept(2)
+
+TODO:
+- getpeername(2)
+- getsockname(2)
+- getsockopt(2)
+- shutdown(2)
+- socketpair(2)
+-/
 
 end Socket
