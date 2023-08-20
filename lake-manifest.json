@@ -4,7 +4,7 @@
  [{"git":
    {"url": "https://github.com/tydeu/lean4-alloy/",
     "subDir?": null,
-    "rev": "99a65c78fffed85115ffda77fcd68c6d22680f32",
+    "rev": "7e8b628899e825c885c84458c9d936b26f640745",
     "opts": {},
     "name": "alloy",
     "inputRev?": "master",

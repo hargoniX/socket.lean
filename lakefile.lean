@@ -10,10 +10,11 @@ module_data alloy.c.o : BuildJob FilePath
 lean_lib «Socket» {
   precompileModules := true
   nativeFacets := #[Module.oFacet, `alloy.c.o]
-  moreLeancArgs := #["-fPIC"]
+  moreLeancArgs := #["-fPIC", "-O0", "-UNDEBUG", "-g"]
 }
 
 @[default_target]
 lean_exe socket_test {
   root := `Main
+  moreLeancArgs := #["-fPIC", "-O0", "-UNDEBUG", "-g"]
 }
