@@ -6,5 +6,10 @@ def main : IO Unit := do
   sock.connect sa
   let data := "Hello World\n".toUTF8
   let bytes ← sock.send data
-  IO.println s!"Sent: {bytes} bytes"
+  IO.println s!"Sent {bytes} greeting bytes"
+  while true do
+    let bytes ← sock.recv 4096
+    let str := String.fromUTF8Unchecked bytes
+    IO.println s!"Got: {str.trimRight}, echoing"
+    let _ ← sock.send bytes
   return ()

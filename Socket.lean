@@ -339,5 +339,19 @@ def sendto (socket : Socket) (buf : ByteArray) (addr : SockAddr) : IO USize := {
   }
 }
 
+-- TODO: support flags
+alloy c extern "lean_socket_recv"
+def recv (socket : Socket) (maxBytes : USize) : IO ByteArray := {
+  int fd = *lean_to_socket(socket);
+  lean_object *buf = lean_alloc_sarray(1, 0, maxBytes);
+  ssize_t recvBytes = recv(fd, lean_sarray_cptr(buf), maxBytes, 0);
+  if (recvBytes < 0) {
+      return lean_io_result_mk_error(lean_decode_io_error(errno, NULL));
+  } else {
+      lean_sarray_object* arrObj = lean_to_sarray(buf);
+      arrObj->m_size = recvBytes;
+      return lean_io_result_mk_ok(buf);
+  }
+}
 
 end Socket
