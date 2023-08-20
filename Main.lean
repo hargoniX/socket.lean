@@ -10,8 +10,11 @@ def client : IO Unit := do
     let bytes := input.toUTF8
     let _ ← sock.send bytes
     let recv ← sock.recv 4096
+    if recv.size == 0 then
+      break
     let str := String.fromUTF8Unchecked recv
     IO.println s!"Got: {str.trimRight}"
+  return ()
 
 def server : IO Unit := do
   let sock ← Socket.mk .inet .stream 
@@ -21,9 +24,12 @@ def server : IO Unit := do
   let (client, _sa) ← sock.accept
   while true do
     let recv ← client.recv 4096 
+    if recv.size == 0 then
+      break
     let str := String.fromUTF8Unchecked recv
     IO.println s!"Got: {str.trimRight}, echoing"
     let _ ← client.send recv
+  return ()
 
 def main (args : List String) : IO Unit := do
   let mode := args.get! 0
