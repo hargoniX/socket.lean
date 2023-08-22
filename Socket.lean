@@ -88,7 +88,15 @@ end Alloy.C
 
 
 opaque Socket.nonemptyType : NonemptyType
+
+/--
+A platform specific socket type. The usual main interaction points with this type are:
+1. `Socket.mk` to create a `Socket`
+2. `Socket.connect` to use a `Socket` as a client to connect somewhere
+3. `Socket.bind`, `Socket.listen` and finally `Socket.accept` to host a server with a `Socket`
+-/
 def Socket : Type := Socket.nonemptyType.type
+
 instance : Nonempty Socket := Socket.nonemptyType.property
 
 namespace Socket
@@ -99,13 +107,7 @@ alloy c include <sys/socket.h> <sys/un.h> <arpa/inet.h> <errno.h> <unistd.h>
 alloy c enum AddressFamily : int translators lean_to_socket_af ↔ socket_af_to_lean where
 | unix = AF_UNIX
 | inet = AF_INET
-| ipx = AF_IPX
-| appletalk = AF_APPLETALK
 | inet6 = AF_INET6
-| decnet = AF_DECnet
-| isdn = AF_ISDN
-| vsock = AF_VSOCK
-| unspec = AF_UNSPEC
 
 deriving instance Inhabited for AddressFamily
 
@@ -144,6 +146,14 @@ static inline int* lean_to_socket(b_lean_obj_arg s) {
 
 end
 
+/--
+Create a `Socket` that:
+- uses the address family specified with `address` in order to identify its peers
+- uses the communication protocol specified with `type` to talk to its peers
+
+A `Socket` is automatically closed once Lean decides to free it so you
+do not necessarily have to take care of this.
+-/
 alloy c extern "lean_mk_socket"
 def mk (family : @& AddressFamily) (type : @& Typ) : IO Socket := {
   int af = lean_to_socket_af(family);
@@ -158,6 +168,9 @@ def mk (family : @& AddressFamily) (type : @& Typ) : IO Socket := {
   }
 }
 
+/--
+Close `socket`, this terminates the connection to its peer if it had one.
+-/
 alloy c extern "lean_close_socket"
 def close (socket : @& Socket) : IO Unit := {
   int fd = *lean_to_socket(socket);
@@ -174,12 +187,26 @@ alloy c alloc SockAddr6 = struct sockaddr_in6 as g_sockaddr_in6_external_class t
 alloy c alloc SockAddrUnix = struct sockaddr_un as g_sockaddr_un_external_class translators lean_to_sockaddr_un ↔ sockaddr_un_to_lean  finalize sockaddr_un_finalize
 
 -- TODO: ToString/FromString
+/--
+Representation of an IPv4 address, create with `IPv4Addr.mk`.
+-/
 def IPv4Addr := UInt32
+
+/--
+This creates the IPv4 address `o1.o2.o3.o4`.
+-/
 def IPv4Addr.mk (o1 o2 o3 o4 : UInt8) : IPv4Addr :=
   o1.toUInt32 <<< 24 ||| o2.toUInt32 <<< 16 ||| o3.toUInt32 <<< 8 ||| o4.toUInt32
 
+/--
+Representaiton of an IPv6 address, create with `IPv4Addr.mk`
+-/
 def IPv6Addr := { xs : ByteArray // xs.size = 16 }
 
+-- TODO: ToString/FromString
+/--
+This creates the IPv6 address `h1:h2:h3:h4:h5:h6:h7:h8`.
+-/
 def IPv6Addr.mk (h1 h2 h3 h4 h5 h6 h7 h8 : UInt16) : IPv6Addr := Id.run do
   let mut arr := ByteArray.mkEmpty 16
   let push16 (h : UInt16) (arr : ByteArray) :=
@@ -196,6 +223,15 @@ def IPv6Addr.mk (h1 h2 h3 h4 h5 h6 h7 h8 : UInt16) : IPv6Addr := Id.run do
   arr := push16 h8 arr
   return  ⟨arr, sorry⟩
 
+
+/--
+Create an IPv4 socket address from:
+- an IPv4 address
+- a port
+
+`SockAddr4` can be coerced to `SockAddr` so it is usually not necessary
+to call the `SockAddr.v4Addr` constructor by hand.
+-/
 alloy c extern "lean_mk_sockaddr_in"
 def SockAddr4.v4 (ip : IPv4Addr) (port : UInt16) : SockAddr4 := {
   struct sockaddr_in* sa = malloc(sizeof(struct sockaddr_in));
@@ -205,8 +241,18 @@ def SockAddr4.v4 (ip : IPv4Addr) (port : UInt16) : SockAddr4 := {
   return sockaddr_in_to_lean(sa);
 }
 
+/--
+Create an IPv6 socket address from
+- an IPv6 address
+- a port
+- optionally a configuration for flow info
+- optionally a scope id
+
+`SockAddr6` can be coerced to `SockAddr` so it is usually not necessary
+to call the `SockAddr.v6Addr` constructor by hand.
+-/
 alloy c extern "lean_mk_sockaddr_in6"
-def SockAddr6.v6 (ip : @& IPv6Addr) (port : UInt16) (flowinfo : UInt32) (scopeId : UInt32) : SockAddr6 := {
+def SockAddr6.v6 (ip : @& IPv6Addr) (port : UInt16) (flowinfo : UInt32 := 0) (scopeId : UInt32 := 0) : SockAddr6 := {
   struct sockaddr_in6* sa = malloc(sizeof(struct sockaddr_in6));
   sa->sin6_family = AF_INET6;
   sa->sin6_port = htons(port);
@@ -216,6 +262,12 @@ def SockAddr6.v6 (ip : @& IPv6Addr) (port : UInt16) (flowinfo : UInt32) (scopeId
   return sockaddr_in6_to_lean(sa);
 }
 
+/--
+Create a UNIX domain socket address from a file path.
+
+`SockAddrUnix` can be coerced to `SockAddr` so it is usually not necessary
+to call the `SockAddr.unixAddr` constructor by hand.
+-/
 alloy c extern "lean_mk_sockaddr_un"
 def SockAddrUnix.unix (path : @& System.FilePath) : SockAddrUnix := {
   struct sockaddr_un* sa = malloc(sizeof(struct sockaddr_un));
@@ -224,9 +276,21 @@ def SockAddrUnix.unix (path : @& System.FilePath) : SockAddrUnix := {
   return sockaddr_un_to_lean(sa);
 }
 
+/--
+An address that can be used by a `Socket` to identify its peers.
+-/
 inductive SockAddr where
+/--
+IPv4 address
+-/
 | v4Addr (addr : SockAddr4)
+/--
+IPv6 address
+-/
 | v6Addr (addr : SockAddr6)
+/--
+UNIX domain socket address
+-/
 | unixAddr (addr : SockAddrUnix)
 
 instance : Coe SockAddr4 SockAddr where
@@ -253,6 +317,9 @@ def SockAddrUnix.family (addr : @& SockAddrUnix) : AddressFamily := {
   return (lean_to_sockaddr_un(lean_ctor_get(addr, 0)))->sun_family;
 }
 
+/--
+Get the `AddressFamily` of a `SockAddr`.
+-/
 def SockAddr.family (addr : SockAddr) : AddressFamily :=
   match addr with
   | .v4Addr sa | .v6Addr sa | .unixAddr sa => sa.family
@@ -267,7 +334,11 @@ def SockAddr6.port (addr : @& SockAddr6) : UInt16 := {
   return ntohs((lean_to_sockaddr_in6(addr))->sin6_port);
 }
 
-def SockAddr.port (addr : SockAddr) : Option UInt16 :=
+/--
+Get the port of a `SockAddr`. This is not a total function
+as UNIX domain socket addresses do not have a port. 
+-/
+def SockAddr.port? (addr : SockAddr) : Option UInt16 :=
   match addr with
   | .v4Addr sa | .v6Addr sa => sa.port
   | .unixAddr .. => none
@@ -294,10 +365,24 @@ def SockAddrUnix.addr (addr : @& SockAddrUnix) : String := {
   return lean_mk_string(string);
 }
 
+/--
+Get the actual address behind a `SockAddr` as a string.
+This corresponds to:
+- the IPv4 address for `SockAddr4`
+- the IPv6 address for `SockAddr4`
+- the file path for `SockAddrUnix`
+-/
 def SockAddr.addr (addr : SockAddr) : String :=
   match addr with
   | .v4Addr sa | .v6Addr sa | .unixAddr sa => sa.addr
 
+/--
+Connect to a `SockAddr` with a `Socket`. This is sets up the `Socket`
+as a client which can
+- send data using `Socket.send`
+- receive answers using `Socket.recv`
+- close the connection using `Socket.close`
+-/
 alloy c extern "lean_socket_connect"
 def connect (socket : @& Socket) (addr : @& SockAddr) : IO Unit := {
   int fd = *lean_to_socket(socket);
@@ -323,7 +408,9 @@ def connect (socket : @& Socket) (addr : @& SockAddr) : IO Unit := {
   }
 }
 
--- TOOD: support flags
+/--
+Send the bytes from `buf` to the peer of `socket`.
+-/
 alloy c extern "lean_socket_send"
 def send (socket : @& Socket) (buf : @& ByteArray) : IO USize := {
   int fd = *lean_to_socket(socket);
@@ -336,6 +423,10 @@ def send (socket : @& Socket) (buf : @& ByteArray) : IO USize := {
 }
 
 -- TOOD: support flags
+/--
+This function is similar to `Socket.connect`. However there is no need for the initial
+`Socket.connect` call as the address of the peer is passed in via `addr`.
+-/
 alloy c extern "lean_socket_sendto"
 def sendto (socket : @& Socket) (buf : @& ByteArray) (addr : @& SockAddr) : IO USize := {
   int fd = *lean_to_socket(socket);
@@ -376,6 +467,9 @@ def sendto (socket : @& Socket) (buf : @& ByteArray) (addr : @& SockAddr) : IO U
 }
 
 -- TODO: support flags
+/--
+Receive up to `maxBytes` bytes from the peer of `socket` in a `ByteArray`.
+-/
 alloy c extern "lean_socket_recv"
 def recv (socket : @& Socket) (maxBytes : USize) : IO ByteArray := {
   int fd = *lean_to_socket(socket);
@@ -390,6 +484,12 @@ def recv (socket : @& Socket) (maxBytes : USize) : IO ByteArray := {
   }
 }
 
+/--
+Bind `socket` to `addr`. This is the first in 3 steps to use it as as a server.
+The remaining two are:
+1. `Socket.listen`
+2. `Socket.accept`
+-/
 alloy c extern "lean_socket_bind"
 def bind (socket : @& Socket) (addr : @& SockAddr) : IO Unit := {
   int fd = *lean_to_socket(socket);
@@ -415,6 +515,14 @@ def bind (socket : @& Socket) (addr : @& SockAddr) : IO Unit := {
   }
 }
 
+/--
+Let `socket` listen on the `SocketAddr` that it was previously bound to using `Socket.bind`.
+The `backlog` argument tells the OS how many connections it should keep queued while waiting to
+accepted. If more than `backlog` connections are pending on `socket` the clients will be denied
+connection.
+
+This is the second in 3 steps to set `socket` use it as a server, the last one is `Socket.accept`.
+-/
 alloy c extern "lean_socket_listen"
 def listen (socket : @& Socket) (backlog : UInt32) : IO Unit := {
   int fd = *lean_to_socket(socket);
@@ -425,6 +533,11 @@ def listen (socket : @& Socket) (backlog : UInt32) : IO Unit := {
   }
 }
 
+/--
+Wait until a new client connects to `socket` after it has been configured as a server using
+`Socket.bind` and `Socket.listen`. This returns both a new `Socket` to communicate with the
+client and the `SockAddr` of the client.
+-/
 alloy c extern "lean_socket_accept"
 def accept (socket : @& Socket) : IO (Socket × SockAddr) := {
   socklen_t saSize;
@@ -464,6 +577,9 @@ def accept (socket : @& Socket) : IO (Socket × SockAddr) := {
   }
 }
 
+/--
+Get the `SockAddr` of the `Socket` connected to `socket`.
+-/
 alloy c extern "lean_socket_getpeername"
 def getpeername (socket : @& Socket) : IO SockAddr := {
   socklen_t saSize;
@@ -496,6 +612,9 @@ def getpeername (socket : @& Socket) : IO SockAddr := {
   }
 }
 
+/--
+Get the `SockAddr` of `socket`.
+-/
 alloy c extern "lean_socket_getsockname"
 def getsockname (socket : @& Socket) : IO SockAddr := {
   socklen_t saSize;
@@ -533,6 +652,10 @@ alloy c enum ShutdownHow : int translators lean_to_socket_shutdown ↔ socket_sh
 | write = SHUT_WR
 | readWrite = SHUT_RDWR
 
+/--
+Partially or fully shutdown `socket`. Depending on the value of `how` this can deny further
+writes, reads or both.
+-/
 alloy c extern "lean_socket_shutdown"
 def shutdown (socket : @& Socket) (how : ShutdownHow) : IO Unit := {
   int fd = *lean_to_socket(socket);
