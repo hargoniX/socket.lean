@@ -5,34 +5,32 @@ on:
 name: ci
 
 jobs:
-  build_windows:
-    name: Build Windows
-  
-    runs-on: "windows-latest"
-    defaults:
-      run:
-        shell: msys2 {0}
-    steps:
-      - uses: msys2/setup-msys2@v2
-        with:
-          msystem: CLANG64
-          install: >-
-            unzip
-            git
-            clang
-
-      - name: install elan
-        run: |
-          set -o pipefail
-          set -x
-          curl https://raw.githubusercontent.com/leanprover/elan/master/elan-init.sh -sSf | sh -s -- -y --default-toolchain none
-
-      - uses: actions/checkout@v3
-
-      - name: build socket.lean
-        run: |
-          "$USERPROFILE/.elan/bin/lake" build
-    
+  #  build_windows:
+  #    name: Build Windows
+  #    runs-on: "windows-latest"
+  #    defaults:
+  #      run:
+  #        shell: msys2 {0}
+  #    steps:
+  #      - uses: msys2/setup-msys2@v2
+  #        with:
+  #          msystem: CLANG64
+  #          install: >-
+  #            unzip
+  #            git
+  #            clang
+  #
+  #      - name: install elan
+  #        run: |
+  #          set -o pipefail
+  #          set -x
+  #          curl https://raw.githubusercontent.com/leanprover/elan/master/elan-init.sh -sSf | sh -s -- -y --default-toolchain none
+  #
+  #      - uses: actions/checkout@v3
+  #
+  #      - name: build socket.lean
+  #        run: |
+  #          "$USERPROFILE/.elan/bin/lake" build
 
   build_unix:
     name: Build UNIX

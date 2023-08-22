@@ -102,7 +102,26 @@ instance : Nonempty Socket := Socket.nonemptyType.property
 namespace Socket
 open scoped Alloy.C
 
-alloy c include <sys/socket.h> <sys/un.h> <arpa/inet.h> <errno.h> <unistd.h>
+alloy c section
+#include <string.h>
+
+#ifdef _WIN32
+
+#include <winsock.h>
+#pragma comment(lib, "ws2_32.lib")
+
+#else -- _WIN32
+
+#include <errno.h>
+#include <unistd.h>
+#include <sys/socket.h>
+#include <sys/un.h>
+#include <arpa/inet.h>
+#include <netinet/in.h>
+
+#endif -- _WIN32
+
+end
 
 alloy c enum AddressFamily : int translators lean_to_socket_af ↔ socket_af_to_lean where
 | unix = AF_UNIX
@@ -181,7 +200,6 @@ def close (socket : @& Socket) : IO Unit := {
   }
 }
 
-alloy c include <netinet/in.h> <string.h>
 alloy c alloc SockAddr4 = struct sockaddr_in as g_sockaddr_in_external_class translators lean_to_sockaddr_in ↔ sockaddr_in_to_lean  finalize sockaddr_in_finalize
 alloy c alloc SockAddr6 = struct sockaddr_in6 as g_sockaddr_in6_external_class translators lean_to_sockaddr_in6 ↔ sockaddr_in6_to_lean finalize sockaddr_in6_finalize
 alloy c alloc SockAddrUnix = struct sockaddr_un as g_sockaddr_un_external_class translators lean_to_sockaddr_un ↔ sockaddr_un_to_lean  finalize sockaddr_un_finalize
