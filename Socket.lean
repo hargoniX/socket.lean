@@ -94,7 +94,7 @@ instance : Nonempty Socket := Socket.nonemptyType.property
 namespace Socket
 open scoped Alloy.C
 
-alloy c include <sys/socket.h> <errno.h> <unistd.h>
+alloy c include <sys/socket.h> <sys/un.h> <arpa/inet.h> <errno.h> <unistd.h>
 
 alloy c enum AddressFamily : int translators lean_to_socket_af ↔ socket_af_to_lean where
 | unix = AF_UNIX
@@ -140,6 +140,8 @@ alloy c enum AddressFamily : int translators lean_to_socket_af ↔ socket_af_to_
 | xdp = AF_XDP
 | unspec = AF_UNSPEC
 
+deriving instance Inhabited for AddressFamily
+
 abbrev AddresFamily.local : AddressFamily := AddressFamily.unix
 
 -- TODO: NONBLOCK and CLOEXEC
@@ -150,6 +152,8 @@ alloy c enum Typ : int translators lean_to_socket_type ↔ socket_type_to_lean w
 | raw = SOCK_RAW
 | rdm = SOCK_RDM
 | packet = SOCK_PACKET
+
+deriving instance Inhabited for Typ
 
 alloy c section
 
@@ -175,12 +179,13 @@ static inline int* lean_to_socket(b_lean_obj_arg s) {
 end
 
 alloy c extern "lean_mk_socket"
-def mk (family : AddressFamily) (type : Typ) : IO Socket := {
+def mk (family : @& AddressFamily) (type : @& Typ) : IO Socket := {
   int af = lean_to_socket_af(family);
   int typ = lean_to_socket_type(type);
   int* fd = malloc(sizeof(int));
   *fd = socket(af, typ, 0);
   if (*fd < 0) {
+    free(fd);
     return lean_io_result_mk_error(lean_decode_io_error(errno, NULL));
   } else {
     return lean_io_result_mk_ok(socket_to_lean(fd));
@@ -188,7 +193,7 @@ def mk (family : AddressFamily) (type : Typ) : IO Socket := {
 }
 
 alloy c extern "lean_close_socket"
-def close (socket : Socket) : IO Unit := {
+def close (socket : @& Socket) : IO Unit := {
   int fd = *lean_to_socket(socket);
   if (close(fd) < 0) {
     return lean_io_result_mk_error(lean_decode_io_error(errno, NULL));
@@ -201,6 +206,7 @@ alloy c include <netinet/in.h> <string.h>
 -- TODO: projection functions
 alloy c alloc SockAddr4 = struct sockaddr_in as g_sockaddr_in_external_class translators lean_to_sockaddr_in ↔ sockaddr_in_to_lean  finalize sockaddr_in_finalize
 alloy c alloc SockAddr6 = struct sockaddr_in6 as g_sockaddr_in6_external_class translators lean_to_sockaddr_in6 ↔ sockaddr_in6_to_lean finalize sockaddr_in6_finalize
+alloy c alloc SockAddrUnix = struct sockaddr_un as g_sockaddr_un_external_class translators lean_to_sockaddr_un ↔ sockaddr_un_to_lean  finalize sockaddr_un_finalize
 
 -- TODO: ToString/FromString
 def IPv4Addr := UInt32
@@ -230,6 +236,7 @@ alloy c section
 typedef struct sockaddr sockaddr;
 typedef struct sockaddr_in sockaddr_in;
 typedef struct sockaddr_in6 sockaddr_in6;
+typedef struct sockaddr_un sockaddr_un;
 
 end
 
@@ -243,7 +250,7 @@ def SockAddr4.v4 (ip : IPv4Addr) (port : UInt16) : SockAddr4 := {
 }
 
 alloy c extern "lean_mk_sockaddr_in6"
-def SockAddr6.v6 (ip : IPv6Addr) (port : UInt16) (flowinfo : UInt32) (scopeId : UInt32) : SockAddr6 := {
+def SockAddr6.v6 (ip : @& IPv6Addr) (port : UInt16) (flowinfo : UInt32) (scopeId : UInt32) : SockAddr6 := {
   struct sockaddr_in6* sa = malloc(sizeof(sockaddr_in6));
   sa->sin6_family = AF_INET6;
   sa->sin6_port = htons(port);
@@ -253,9 +260,18 @@ def SockAddr6.v6 (ip : IPv6Addr) (port : UInt16) (flowinfo : UInt32) (scopeId : 
   return sockaddr_in6_to_lean(sa);
 }
 
+alloy c extern "lean_mk_sockaddr_un"
+def SockAddrUnix.unix (path : @& System.FilePath) : SockAddrUnix := {
+  struct sockaddr_un* sa = malloc(sizeof(sockaddr_un));
+  sa->sun_family = AF_UNIX;
+  strncpy(sa->sun_path, lean_string_cstr(path), sizeof(sa->sun_path) - 1);
+  return sockaddr_un_to_lean(sa);
+}
+
 inductive SockAddr where
 | v4Addr (addr : SockAddr4)
 | v6Addr (addr : SockAddr6)
+| unixAddr (addr : SockAddrUnix)
 
 instance : Coe SockAddr4 SockAddr where
   coe sa := .v4Addr sa
@@ -263,8 +279,70 @@ instance : Coe SockAddr4 SockAddr where
 instance : Coe SockAddr6 SockAddr where
   coe sa := .v6Addr sa
 
+instance : Coe SockAddrUnix SockAddr where
+  coe sa := .unixAddr sa
+
+alloy c extern "lean_sockaddr_in_family"
+def SockAddr4.family (addr : @& SockAddr4) : AddressFamily := {
+  return (lean_to_sockaddr_in(lean_ctor_get(addr, 0)))->sin_family;
+}
+
+alloy c extern "lean_sockaddr_in6_family"
+def SockAddr6.family (addr : @& SockAddr6) : AddressFamily := {
+  return (lean_to_sockaddr_in6(lean_ctor_get(addr, 0)))->sin6_family;
+}
+
+alloy c extern "lean_sockaddr_un_family"
+def SockAddrUnix.family (addr : @& SockAddrUnix) : AddressFamily := {
+  return (lean_to_sockaddr_un(lean_ctor_get(addr, 0)))->sun_family;
+}
+
+def SockAddr.family (addr : SockAddr) : AddressFamily :=
+  match addr with
+  | .v4Addr sa | .v6Addr sa | .unixAddr sa => sa.family
+
+alloy c extern "lean_sockaddr_in_port"
+def SockAddr4.port (addr : @& SockAddr4) : UInt16 := {
+  return ntohs((lean_to_sockaddr_in(addr))->sin_port);
+}
+
+alloy c extern "lean_sockaddr_in6_port"
+def SockAddr6.port (addr : @& SockAddr6) : UInt16 := {
+  return ntohs((lean_to_sockaddr_in6(addr))->sin6_port);
+}
+
+def SockAddr.port (addr : SockAddr) : Option UInt16 :=
+  match addr with
+  | .v4Addr sa | .v6Addr sa => sa.port
+  | .unixAddr .. => none
+
+alloy c extern "lean_sockaddr_in_addr"
+def SockAddr4.addr (addr : @& SockAddr4) : String := {
+  char string[INET_ADDRSTRLEN];
+  inet_ntop(AF_INET, &(lean_to_sockaddr_in(addr))->sin_addr, string, INET_ADDRSTRLEN);
+  return lean_mk_string(string);
+}
+
+alloy c extern "lean_sockaddr_in6_addr"
+def SockAddr6.addr (addr : @& SockAddr6) : String := {
+  char string[INET6_ADDRSTRLEN];
+  inet_ntop(AF_INET6, &(lean_to_sockaddr_in6(addr))->sin6_addr, string, INET6_ADDRSTRLEN);
+  return lean_mk_string(string);
+}
+
+alloy c extern "lean_sockaddr_un_addr"
+def SockAddrUnix.addr (addr : @& SockAddrUnix) : String := {
+  char string[108]; -- Linux specific magic constant
+  inet_ntop(AF_UNIX, &(lean_to_sockaddr_un(addr))->sun_path, string, 108);
+  return lean_mk_string(string);
+}
+
+def SockAddr.addr (addr : SockAddr) : String :=
+  match addr with
+  | .v4Addr sa | .v6Addr sa | .unixAddr sa => sa.addr
+
 alloy c extern "lean_socket_connect"
-def connect (socket : Socket) (addr : SockAddr) : IO Unit := {
+def connect (socket : @& Socket) (addr : @& SockAddr) : IO Unit := {
   int fd = *lean_to_socket(socket);
   int tag = lean_obj_tag(addr);
   int err = 0;
@@ -290,7 +368,7 @@ def connect (socket : Socket) (addr : SockAddr) : IO Unit := {
 
 -- TOOD: support flags
 alloy c extern "lean_socket_send"
-def send (socket : Socket) (buf : ByteArray) : IO USize := {
+def send (socket : @& Socket) (buf : @& ByteArray) : IO USize := {
   int fd = *lean_to_socket(socket);
   ssize_t bytes = send(fd, lean_sarray_cptr(buf), lean_sarray_size(buf), 0);
   if (bytes < 0) {
@@ -302,7 +380,7 @@ def send (socket : Socket) (buf : ByteArray) : IO USize := {
 
 -- TOOD: support flags
 alloy c extern "lean_socket_sendto"
-def sendto (socket : Socket) (buf : ByteArray) (addr : SockAddr) : IO USize := {
+def sendto (socket : @& Socket) (buf : @& ByteArray) (addr : @& SockAddr) : IO USize := {
   int fd = *lean_to_socket(socket);
   int tag = lean_obj_tag(addr);
   ssize_t bytes = 0;
@@ -342,7 +420,7 @@ def sendto (socket : Socket) (buf : ByteArray) (addr : SockAddr) : IO USize := {
 
 -- TODO: support flags
 alloy c extern "lean_socket_recv"
-def recv (socket : Socket) (maxBytes : USize) : IO ByteArray := {
+def recv (socket : @& Socket) (maxBytes : USize) : IO ByteArray := {
   int fd = *lean_to_socket(socket);
   lean_object *buf = lean_alloc_sarray(1, 0, maxBytes);
   ssize_t recvBytes = recv(fd, lean_sarray_cptr(buf), maxBytes, 0);
@@ -356,7 +434,7 @@ def recv (socket : Socket) (maxBytes : USize) : IO ByteArray := {
 }
 
 alloy c extern "lean_socket_bind"
-def bind (socket : Socket) (addr : SockAddr) : IO Unit := {
+def bind (socket : @& Socket) (addr : @& SockAddr) : IO Unit := {
   int fd = *lean_to_socket(socket);
   int tag = lean_obj_tag(addr);
   int err = 0;
@@ -381,7 +459,7 @@ def bind (socket : Socket) (addr : SockAddr) : IO Unit := {
 }
 
 alloy c extern "lean_socket_listen"
-def listen (socket : Socket) (backlog : UInt32) : IO Unit := {
+def listen (socket : @& Socket) (backlog : UInt32) : IO Unit := {
   int fd = *lean_to_socket(socket);
   if (listen(fd, backlog) < 0) {
     return lean_io_result_mk_error(lean_decode_io_error(errno, NULL));
@@ -391,7 +469,7 @@ def listen (socket : Socket) (backlog : UInt32) : IO Unit := {
 }
 
 alloy c extern "lean_socket_accept"
-def accept (socket : Socket) : IO (Socket × SockAddr) := {
+def accept (socket : @& Socket) : IO (Socket × SockAddr) := {
   int saSize;
 
   int fd = *lean_to_socket(socket);
@@ -401,6 +479,7 @@ def accept (socket : Socket) : IO (Socket × SockAddr) := {
   *newFd = accept(fd, sa, &saSize);
 
   if (*newFd < 0) {
+    free(sa);
     free(newFd);
     return lean_io_result_mk_error(lean_decode_io_error(errno, NULL));
   } else {
@@ -416,32 +495,97 @@ def accept (socket : Socket) : IO (Socket × SockAddr) := {
         leanSa = lean_alloc_ctor(1, 1, 0);
         lean_ctor_set(leanSa, 0, sockaddr_in6_to_lean((struct sockaddr_in6*)sa));
         break;
+      case AF_UNIX:
+        leanSa = lean_alloc_ctor(2, 1, 0);
+        lean_ctor_set(leanSa, 0, sockaddr_un_to_lean((struct sockaddr_un*)sa));
+        break;
       default:
-        return lean_panic_fn(lean_box(0), lean_mk_string("accept only supports INET and INET6 right now"));
+        return lean_panic_fn(lean_box(0), lean_mk_string("accept only supports INET, INET6 and UNIX right now"));
     }
     lean_ctor_set(pair, 1, leanSa);
     return lean_io_result_mk_ok(pair);
   }
 }
 
+alloy c extern "lean_socket_getpeername"
+def getpeername (socket : @& Socket) : IO SockAddr := {
+  int saSize;
 
-/-
-DONE:
-- socket(2)
-- close(2)
-- connect(2)
-- recv(2)
-- send(2)
-- bind(2)
-- listen(2)
-- accept(2)
+  int fd = *lean_to_socket(socket);
+  struct sockaddr* sa = malloc(sizeof(sockaddr));
 
-TODO:
-- getpeername(2)
-- getsockname(2)
-- getsockopt(2)
-- shutdown(2)
-- socketpair(2)
--/
+  if (getpeername(fd, sa, &saSize) < 0) {
+    free(sa);
+    return lean_io_result_mk_error(lean_decode_io_error(errno, NULL));
+  } else {
+    lean_object* leanSa;
+    switch (sa->sa_family) {
+      case AF_INET:
+        leanSa = lean_alloc_ctor(0, 1, 0);
+        lean_ctor_set(leanSa, 0, sockaddr_in_to_lean((struct sockaddr_in*)sa));
+        break;
+      case AF_INET6:
+        leanSa = lean_alloc_ctor(1, 1, 0);
+        lean_ctor_set(leanSa, 0, sockaddr_in6_to_lean((struct sockaddr_in6*)sa));
+        break;
+      case AF_UNIX:
+        leanSa = lean_alloc_ctor(2, 1, 0);
+        lean_ctor_set(leanSa, 0, sockaddr_un_to_lean((struct sockaddr_un*)sa));
+        break;
+      default:
+        return lean_panic_fn(lean_box(0), lean_mk_string("getpeername only supports INET, INET6 and UNIX right now"));
+    }
+    return lean_io_result_mk_ok(leanSa);
+  }
+}
+
+alloy c extern "lean_socket_getsockname"
+def getsockname (socket : @& Socket) : IO SockAddr := {
+  int saSize;
+
+  int fd = *lean_to_socket(socket);
+  struct sockaddr* sa = malloc(sizeof(sockaddr));
+
+  if (getsockname(fd, sa, &saSize) < 0) {
+    free(sa);
+    return lean_io_result_mk_error(lean_decode_io_error(errno, NULL));
+  } else {
+    lean_object* leanSa;
+    switch (sa->sa_family) {
+      case AF_INET:
+        leanSa = lean_alloc_ctor(0, 1, 0);
+        lean_ctor_set(leanSa, 0, sockaddr_in_to_lean((struct sockaddr_in*)sa));
+        break;
+      case AF_INET6:
+        leanSa = lean_alloc_ctor(1, 1, 0);
+        lean_ctor_set(leanSa, 0, sockaddr_in6_to_lean((struct sockaddr_in6*)sa));
+        break;
+      case AF_UNIX:
+        leanSa = lean_alloc_ctor(2, 1, 0);
+        lean_ctor_set(leanSa, 0, sockaddr_un_to_lean((struct sockaddr_un*)sa));
+        break;
+      default:
+        return lean_panic_fn(lean_box(0), lean_mk_string("getsockname only supports INET, INET6 and UNIX right now"));
+    }
+    return lean_io_result_mk_ok(leanSa);
+  }
+}
+
+alloy c enum ShutdownHow : int translators lean_to_socket_shutdown ↔ socket_shutdown_to_lean where
+| read = SHUT_RD
+| write = SHUT_WR
+| readWrite = SHUT_RDWR
+
+alloy c extern "lean_socket_shutdown"
+def shutdown (socket : @& Socket) (how : ShutdownHow) : IO Unit := {
+  int fd = *lean_to_socket(socket);
+  int cHow = lean_to_socket_shutdown(how);
+
+  if (shutdown(fd, cHow) < 0) {
+    return lean_io_result_mk_error(lean_decode_io_error(errno, NULL));
+  } else {
+    return lean_io_result_mk_ok(lean_box(0));
+  }
+}
 
 end Socket
