@@ -99,45 +99,12 @@ alloy c include <sys/socket.h> <sys/un.h> <arpa/inet.h> <errno.h> <unistd.h>
 alloy c enum AddressFamily : int translators lean_to_socket_af ↔ socket_af_to_lean where
 | unix = AF_UNIX
 | inet = AF_INET
-| ax25 = AF_AX25
 | ipx = AF_IPX
 | appletalk = AF_APPLETALK
-| netrom = AF_NETROM
-| bridge = AF_BRIDGE
-| atmpvc = AF_ATMPVC
-| x25 = AF_X25
 | inet6 = AF_INET6
-| rose = AF_ROSE
 | decnet = AF_DECnet
-| netbeui = AF_NETBEUI
-| security = AF_SECURITY
-| key = AF_KEY
-| netlink = AF_NETLINK
-| packet = AF_PACKET
-| econet = AF_ECONET
-| atmsvc = AF_ATMSVC
-| rds = AF_RDS
-| irda = AF_IRDA
-| pppox = AF_PPPOX
-| wanpipe = AF_WANPIPE
-| llc = AF_LLC
-| ib = AF_IB
-| mpls = AF_MPLS
-| can = AF_CAN
-| tipc = AF_TIPC
-| bluetooth = AF_BLUETOOTH
-| iucv = AF_IUCV
-| rxrpc = AF_RXRPC
 | isdn = AF_ISDN
-| phonet = AF_PHONET
-| ieee802154 = AF_IEEE802154
-| caif = AF_CAIF
-| alg = AF_ALG
 | vsock = AF_VSOCK
-| kcm = AF_KCM
-| qipcrtr = AF_QIPCRTR
-| smc = AF_SMC
-| xdp = AF_XDP
 | unspec = AF_UNSPEC
 
 deriving instance Inhabited for AddressFamily
@@ -151,7 +118,6 @@ alloy c enum Typ : int translators lean_to_socket_type ↔ socket_type_to_lean w
 | seqpacket = SOCK_SEQPACKET
 | raw = SOCK_RAW
 | rdm = SOCK_RDM
-| packet = SOCK_PACKET
 
 deriving instance Inhabited for Typ
 
@@ -470,7 +436,7 @@ def listen (socket : @& Socket) (backlog : UInt32) : IO Unit := {
 
 alloy c extern "lean_socket_accept"
 def accept (socket : @& Socket) : IO (Socket × SockAddr) := {
-  int saSize;
+  socklen_t saSize;
 
   int fd = *lean_to_socket(socket);
   int* newFd = malloc(sizeof(int));
@@ -509,7 +475,7 @@ def accept (socket : @& Socket) : IO (Socket × SockAddr) := {
 
 alloy c extern "lean_socket_getpeername"
 def getpeername (socket : @& Socket) : IO SockAddr := {
-  int saSize;
+  socklen_t saSize;
 
   int fd = *lean_to_socket(socket);
   struct sockaddr* sa = malloc(sizeof(sockaddr));
@@ -541,7 +507,7 @@ def getpeername (socket : @& Socket) : IO SockAddr := {
 
 alloy c extern "lean_socket_getsockname"
 def getsockname (socket : @& Socket) : IO SockAddr := {
-  int saSize;
+  socklen_t saSize;
 
   int fd = *lean_to_socket(socket);
   struct sockaddr* sa = malloc(sizeof(sockaddr));
