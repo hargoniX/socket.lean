@@ -169,7 +169,6 @@ def close (socket : @& Socket) : IO Unit := {
 }
 
 alloy c include <netinet/in.h> <string.h>
--- TODO: projection functions
 alloy c alloc SockAddr4 = struct sockaddr_in as g_sockaddr_in_external_class translators lean_to_sockaddr_in ↔ sockaddr_in_to_lean  finalize sockaddr_in_finalize
 alloy c alloc SockAddr6 = struct sockaddr_in6 as g_sockaddr_in6_external_class translators lean_to_sockaddr_in6 ↔ sockaddr_in6_to_lean finalize sockaddr_in6_finalize
 alloy c alloc SockAddrUnix = struct sockaddr_un as g_sockaddr_un_external_class translators lean_to_sockaddr_un ↔ sockaddr_un_to_lean  finalize sockaddr_un_finalize
@@ -197,18 +196,9 @@ def IPv6Addr.mk (h1 h2 h3 h4 h5 h6 h7 h8 : UInt16) : IPv6Addr := Id.run do
   arr := push16 h8 arr
   return  ⟨arr, sorry⟩
 
-alloy c section
--- TODO: temporary until Mac fixes the malloc invocation in the lines below
-typedef struct sockaddr sockaddr;
-typedef struct sockaddr_in sockaddr_in;
-typedef struct sockaddr_in6 sockaddr_in6;
-typedef struct sockaddr_un sockaddr_un;
-
-end
-
 alloy c extern "lean_mk_sockaddr_in"
 def SockAddr4.v4 (ip : IPv4Addr) (port : UInt16) : SockAddr4 := {
-  struct sockaddr_in* sa = malloc(sizeof(sockaddr_in));
+  struct sockaddr_in* sa = malloc(sizeof(struct sockaddr_in));
   sa->sin_family = AF_INET;
   sa->sin_port = htons(port);
   sa->sin_addr.s_addr = htonl(ip);
@@ -217,7 +207,7 @@ def SockAddr4.v4 (ip : IPv4Addr) (port : UInt16) : SockAddr4 := {
 
 alloy c extern "lean_mk_sockaddr_in6"
 def SockAddr6.v6 (ip : @& IPv6Addr) (port : UInt16) (flowinfo : UInt32) (scopeId : UInt32) : SockAddr6 := {
-  struct sockaddr_in6* sa = malloc(sizeof(sockaddr_in6));
+  struct sockaddr_in6* sa = malloc(sizeof(struct sockaddr_in6));
   sa->sin6_family = AF_INET6;
   sa->sin6_port = htons(port);
   sa->sin6_flowinfo = htonl(flowinfo);
@@ -228,7 +218,7 @@ def SockAddr6.v6 (ip : @& IPv6Addr) (port : UInt16) (flowinfo : UInt32) (scopeId
 
 alloy c extern "lean_mk_sockaddr_un"
 def SockAddrUnix.unix (path : @& System.FilePath) : SockAddrUnix := {
-  struct sockaddr_un* sa = malloc(sizeof(sockaddr_un));
+  struct sockaddr_un* sa = malloc(sizeof(struct sockaddr_un));
   sa->sun_family = AF_UNIX;
   strncpy(sa->sun_path, lean_string_cstr(path), sizeof(sa->sun_path) - 1);
   return sockaddr_un_to_lean(sa);
@@ -298,8 +288,9 @@ def SockAddr6.addr (addr : @& SockAddr6) : String := {
 
 alloy c extern "lean_sockaddr_un_addr"
 def SockAddrUnix.addr (addr : @& SockAddrUnix) : String := {
-  char string[108]; -- Linux specific magic constant
-  inet_ntop(AF_UNIX, &(lean_to_sockaddr_un(addr))->sun_path, string, 108);
+  struct sockaddr_un* sun = lean_to_sockaddr_un(addr);
+  char string[sizeof(sun->sun_path)];
+  inet_ntop(AF_UNIX, &sun->sun_path, string, sizeof(string));
   return lean_mk_string(string);
 }
 
@@ -316,10 +307,10 @@ def connect (socket : @& Socket) (addr : @& SockAddr) : IO Unit := {
 
   switch (tag) {
     case 0:
-      err = connect(fd, sa, sizeof(sockaddr_in));
+      err = connect(fd, sa, sizeof(struct sockaddr_in));
       break;
     case 1:
-      err = connect(fd, sa, sizeof(sockaddr_in6));
+      err = connect(fd, sa, sizeof(struct sockaddr_in6));
       break;
     default:
       return lean_panic_fn(lean_box(0), lean_mk_string("illegal C value"));
@@ -360,7 +351,7 @@ def sendto (socket : @& Socket) (buf : @& ByteArray) (addr : @& SockAddr) : IO U
         lean_sarray_size(buf),
         0,
         sa,
-        sizeof(sockaddr_in)
+        sizeof(struct sockaddr_in)
       );
       break;
     case 1:
@@ -370,7 +361,7 @@ def sendto (socket : @& Socket) (buf : @& ByteArray) (addr : @& SockAddr) : IO U
         lean_sarray_size(buf),
         0,
         sa,
-        sizeof(sockaddr_in6)
+        sizeof(struct sockaddr_in6)
       );
       break;
     default:
@@ -408,10 +399,10 @@ def bind (socket : @& Socket) (addr : @& SockAddr) : IO Unit := {
 
   switch (tag) {
     case 0:
-      err = bind(fd, sa, sizeof(sockaddr_in));
+      err = bind(fd, sa, sizeof(struct sockaddr_in));
       break;
     case 1:
-      err = bind(fd, sa, sizeof(sockaddr_in6));
+      err = bind(fd, sa, sizeof(struct sockaddr_in6));
       break;
     default:
       return lean_panic_fn(lean_box(0), lean_mk_string("illegal C value"));
@@ -440,7 +431,7 @@ def accept (socket : @& Socket) : IO (Socket × SockAddr) := {
 
   int fd = *lean_to_socket(socket);
   int* newFd = malloc(sizeof(int));
-  struct sockaddr* sa = malloc(sizeof(sockaddr));
+  struct sockaddr* sa = malloc(sizeof(struct sockaddr));
 
   *newFd = accept(fd, sa, &saSize);
 
@@ -478,7 +469,7 @@ def getpeername (socket : @& Socket) : IO SockAddr := {
   socklen_t saSize;
 
   int fd = *lean_to_socket(socket);
-  struct sockaddr* sa = malloc(sizeof(sockaddr));
+  struct sockaddr* sa = malloc(sizeof(struct sockaddr));
 
   if (getpeername(fd, sa, &saSize) < 0) {
     free(sa);
@@ -510,7 +501,7 @@ def getsockname (socket : @& Socket) : IO SockAddr := {
   socklen_t saSize;
 
   int fd = *lean_to_socket(socket);
-  struct sockaddr* sa = malloc(sizeof(sockaddr));
+  struct sockaddr* sa = malloc(sizeof(struct sockaddr));
 
   if (getsockname(fd, sa, &saSize) < 0) {
     free(sa);

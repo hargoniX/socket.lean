@@ -4,7 +4,7 @@
  [{"git":
    {"url": "https://github.com/tydeu/lean4-alloy/",
     "subDir?": null,
-    "rev": "7e8b628899e825c885c84458c9d936b26f640745",
+    "rev": "96a2c6ac7cf8d376b3c6f670306abdff4390377b",
     "opts": {},
     "name": "alloy",
     "inputRev?": "master",
@@ -12,7 +12,7 @@
   {"git":
    {"url": "https://github.com/leanprover/std4",
     "subDir?": null,
-    "rev": "61a6507eff4dd71c01e0c7e194bc569d4719a6d3",
+    "rev": "b5f7bd40d2162fe148e585543f284a5d8cc0ef26",
     "opts": {},
     "name": "std",
     "inputRev?": "main",
