@@ -5,22 +5,48 @@ on:
 name: ci
 
 jobs:
-  build:
-    name: Build
+  build_windows:
+    name: Build Windows
+  
+    runs-on: "windows-latest"
+    defaults:
+      run:
+        shell: msys2 {0}
+    steps:
+      - uses: msys2/setup-msys2@v2
+        with:
+          msystem: CLANG64
+          install: >-
+            unzip
+            git
+            clang
+
+      - name: install elan
+        run: |
+          set -o pipefail
+          set -x
+          curl https://raw.githubusercontent.com/leanprover/elan/master/elan-init.sh -sSf | sh -s -- -y --default-toolchain none
+
+      - uses: actions/checkout@v3
+
+      - name: build socket.lean
+        run: |
+          "$USERPROFILE/.elan/bin/lake" build
+    
+
+  build_unix:
+    name: Build UNIX
     strategy:
       matrix:
         include:
           - platform: "ubuntu-latest"
-            elan_url : "https://github.com/leanprover/elan/releases/download/v1.4.2/elan-x86_64-unknown-linux-gnu.tar.gz"
           - platform: "macos-latest"
-            elan_url: "https://github.com/leanprover/elan/releases/download/v2.0.1/elan-x86_64-apple-darwin.tar.gz"
     runs-on: ${{ matrix.platform }}
     steps:
       - name: install elan
         run: |
           set -o pipefail
-          curl -sSfL ${{ matrix.elan_url }} | tar xz
-          ./elan-init -y --default-toolchain none
+          curl https://raw.githubusercontent.com/leanprover/elan/master/elan-init.sh -sSf | sh -s -- -y --default-toolchain none
           echo "$HOME/.elan/bin" >> $GITHUB_PATH
 
       - uses: actions/checkout@v3
