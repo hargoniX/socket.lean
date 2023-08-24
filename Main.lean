@@ -13,14 +13,14 @@ def client (arg : String) : IO Unit := do
   assert! str == arg
 
 def handle (client : Socket) : IO Unit := do
-  let recv ← client.recv 4096 
+  let recv ← client.recv 4096
   if recv.size == 0 then
     return ()
   let _ ← client.send recv
   IO.println "Done handling"
 
 def server : IO Unit := do
-  let sock ← Socket.mk .inet .stream 
+  let sock ← Socket.mk .inet .stream
   let sa : Socket.SockAddr4 := .v4 (.mk 127 0 0 1) 8888
   sock.bind sa
   sock.listen 1
@@ -37,4 +37,4 @@ def main (args : List String) : IO Unit := do
     server
   else
     IO.println "Unknown mode"
-    return ()  
+    return ()

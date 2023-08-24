@@ -104,6 +104,7 @@ open scoped Alloy.C
 
 alloy c section
 #include <string.h>
+#include <fcntl.h>
 
 #ifdef _WIN32
 
@@ -169,12 +170,13 @@ end
 Create a `Socket` that:
 - uses the address family specified with `address` in order to identify its peers
 - uses the communication protocol specified with `type` to talk to its peers
+- optionally the socket can be configured to act in a non blocking fashion via `blocking`
 
 A `Socket` is automatically closed once Lean decides to free it so you
 do not necessarily have to take care of this.
 -/
 alloy c extern "lean_mk_socket"
-def mk (family : @& AddressFamily) (type : @& Typ) : IO Socket := {
+def mk (family : @& AddressFamily) (type : @& Typ) (blocking : Bool := true) : IO Socket := {
   int af = lean_to_socket_af(family);
   int typ = lean_to_socket_type(type);
   int* fd = malloc(sizeof(int));
@@ -183,6 +185,12 @@ def mk (family : @& AddressFamily) (type : @& Typ) : IO Socket := {
     free(fd);
     return lean_io_result_mk_error(lean_decode_io_error(errno, NULL));
   } else {
+    if (blocking == 0) {
+      if(fcntl(*fd, O_NONBLOCK) < 0) {
+        free(fd);
+        return lean_io_result_mk_error(lean_decode_io_error(errno, NULL));
+      }
+    }
     return lean_io_result_mk_ok(socket_to_lean(fd));
   }
 }
