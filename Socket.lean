@@ -250,15 +250,15 @@ instance : Coe SockAddrUnix SockAddr where
 
 alloy c extern "lean_sockaddr_in_family"
 def SockAddr4.family (addr : @& SockAddr4) : AddressFamily :=
-  return of_lean<SockAddr4>(lean_ctor_get(addr, 0))->sin_family;
+  return of_lean<SockAddr4>(addr)->sin_family;
 
 alloy c extern "lean_sockaddr_in6_family"
 def SockAddr6.family (addr : @& SockAddr6) : AddressFamily :=
-  return of_lean<SockAddr6>(lean_ctor_get(addr, 0))->sin6_family;
+  return of_lean<SockAddr6>(addr)->sin6_family;
 
 alloy c extern "lean_sockaddr_un_family"
 def SockAddrUnix.family (addr : @& SockAddrUnix) : AddressFamily :=
-  return of_lean<SockAddrUnix>(lean_ctor_get(addr, 0))->sun_family;
+  return of_lean<SockAddrUnix>(addr)->sun_family;
 
 /--
 Get the `AddressFamily` of a `SockAddr`.
