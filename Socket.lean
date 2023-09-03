@@ -1,108 +1,10 @@
 import Alloy.C
-import Lean
-import Std.Data.Array.Basic
 
-namespace Alloy.C
-open Lean
-
-alloy c include <lean/lean.h>
-
-alloy c section
-static inline void noop_foreach(void *mod, b_lean_obj_arg fn) {}
-end
-
-scoped syntax "alloy" "c" "enum" ident " : " ident "translators" ident " ↔ " ident "where" ("| " ident " = " ident)+ : command
-
-macro_rules
-| `(command| alloy c enum $name:ident : $cType:ident translators $leanToC:ident ↔ $cToLean:ident where $[| $leanVariant:ident = $cVariant:ident]*) => do
-  let ffiType ←
-    if leanVariant.size <= 2^8 then
-      pure <| mkIdent `uint8_t
-    else if leanVariant.size <= 2^16 then
-      pure <| mkIdent `uint16_t
-    else if leanVariant.size <= 2^32 then
-      pure <| mkIdent `uint32_t
-    else
-      Macro.throwError s!"Enum {name} has more than 2^32 variants, this is not supported"
-  let counter := Array.range leanVariant.size |>.map (Syntax.mkNumLit <| toString ·)
-  `(
-    inductive $name : Type where $[ | $leanVariant:ident]*
-    alloy c section
-      static inline $cType $leanToC:ident($ffiType:ident arg) {
-        switch (arg) {
-          $[
-            case $counter:constExpr:
-              return $cVariant;
-          ]*
-          default:
-            lean_panic_fn(lean_box(-1), lean_mk_string("illegal C value"));
-            return -1;
-        }
-      }
-
-      static inline $ffiType $cToLean:ident($cType:ident arg) {
-        switch (arg) {
-          $[
-            case $cVariant:constExpr:
-              return $counter;
-          ]*
-          default:
-            lean_panic_fn(lean_box(-1), lean_mk_string("illegal Lean value"));
-            return -1;
-        }
-      }
-    end
-   )
-
-scoped syntax "alloy" "c" "alloc" ident " = " cTypeSpec "as" ident "translators" ident " ↔ " ident "finalize" ident : command
-
-macro_rules
-| `(command| alloy c alloc $name:ident = $cName:cTypeSpec as $externClass:ident translators $leanToC:ident ↔ $cToLean:ident finalize $finalizer:ident) =>
-  let nonemptyType := mkIdent <| name.getId.append `nonemptyType
-  `(
-    opaque $nonemptyType : NonemptyType
-    def $name : Type := NonemptyType.type $nonemptyType
-    instance : Nonempty $name := Subtype.property $nonemptyType
-
-    alloy c section
-      static lean_external_class* $externClass:ident = NULL;
-
-      static void $finalizer:ident(void* ptr) {
-        free(($cName:cTypeSpec*)ptr);
-      }
-
-      static inline lean_object* $cToLean:ident($cName:cTypeSpec* ptr) {
-        if ($externClass:ident == NULL) {
-          $externClass:ident = lean_register_external_class($finalizer:ident, noop_foreach);
-        }
-        return lean_alloc_external($externClass:ident, ptr);
-      }
-
-      static inline $cName:cTypeSpec* $leanToC:ident(b_lean_obj_arg ptr) {
-        return ($cName:cTypeSpec*)(lean_get_external_data(ptr));
-      }
-    end
-  )
-
-end Alloy.C
-
-
-opaque Socket.nonemptyType : NonemptyType
-
-/--
-A platform specific socket type. The usual main interaction points with this type are:
-1. `Socket.mk` to create a `Socket`
-2. `Socket.connect` to use a `Socket` as a client to connect somewhere
-3. `Socket.bind`, `Socket.listen` and finally `Socket.accept` to host a server with a `Socket`
--/
-def Socket : Type := Socket.nonemptyType.type
-
-instance : Nonempty Socket := Socket.nonemptyType.property
-
-namespace Socket
 open scoped Alloy.C
 
 alloy c section
+
+#include <lean/lean.h>
 #include <string.h>
 #include <fcntl.h>
 
@@ -122,30 +24,7 @@ alloy c section
 
 #endif -- _WIN32
 
-end
-
-alloy c enum AddressFamily : int translators lean_to_socket_af ↔ socket_af_to_lean where
-| unix = AF_UNIX
-| inet = AF_INET
-| inet6 = AF_INET6
-
-deriving instance Inhabited for AddressFamily
-
-abbrev AddresFamily.local : AddressFamily := AddressFamily.unix
-
--- TODO: NONBLOCK and CLOEXEC
-alloy c enum Typ : int translators lean_to_socket_type ↔ socket_type_to_lean where
-| stream = SOCK_STREAM
-| dgram = SOCK_DGRAM
-| seqpacket = SOCK_SEQPACKET
-| raw = SOCK_RAW
-| rdm = SOCK_RDM
-
-deriving instance Inhabited for Typ
-
-alloy c section
-
-static lean_external_class *g_socket_external_class = NULL;
+static inline void noop_foreach(void *mod, b_lean_obj_arg fn) {}
 
 static void socket_finalize(void* ptr) {
   int* fd = (int*)ptr;
@@ -153,18 +32,37 @@ static void socket_finalize(void* ptr) {
   free(fd);
 }
 
-static inline lean_object* socket_to_lean(int* s) {
-  if (g_socket_external_class == NULL) {
-    g_socket_external_class = lean_register_external_class(socket_finalize, noop_foreach);
-  }
-  return lean_alloc_external(g_socket_external_class, s);
-}
-
-static inline int* lean_to_socket(b_lean_obj_arg s) {
-  return (int*)(lean_get_external_data(s));
-}
-
 end
+
+/--
+A platform specific socket type. The usual main interaction points with this type are:
+1. `Socket.mk` to create a `Socket`
+2. `Socket.connect` to use a `Socket` as a client to connect somewhere
+3. `Socket.bind`, `Socket.listen` and finally `Socket.accept` to host a server with a `Socket`
+-/
+alloy c extern_type Socket => int := {
+  foreach := `noop_foreach
+  finalize := `socket_finalize
+}
+
+namespace Socket
+
+alloy c enum AddressFamily => int
+| unix => AF_UNIX
+| inet => AF_INET
+| inet6 => AF_INET6
+deriving Inhabited
+
+abbrev AddresFamily.local : AddressFamily := AddressFamily.unix
+
+-- TODO: NONBLOCK and CLOEXEC
+alloy c enum Typ => int
+| stream => SOCK_STREAM
+| dgram => SOCK_DGRAM
+| seqpacket => SOCK_SEQPACKET
+| raw => SOCK_RAW
+| rdm => SOCK_RDM
+deriving Inhabited
 
 /--
 Create a `Socket` that:
@@ -177,8 +75,8 @@ do not necessarily have to take care of this.
 -/
 alloy c extern "lean_mk_socket"
 def mk (family : @& AddressFamily) (type : @& Typ) (blocking : Bool := true) : IO Socket := {
-  int af = lean_to_socket_af(family);
-  int typ = lean_to_socket_type(type);
+  int af = of_lean<AddressFamily>(family);
+  int typ = of_lean<Typ>(type);
   int* fd = malloc(sizeof(int));
   *fd = socket(af, typ, 0);
   if (*fd < 0) {
@@ -191,7 +89,7 @@ def mk (family : @& AddressFamily) (type : @& Typ) (blocking : Bool := true) : I
         return lean_io_result_mk_error(lean_decode_io_error(errno, NULL));
       }
     }
-    return lean_io_result_mk_ok(socket_to_lean(fd));
+    return lean_io_result_mk_ok(to_lean<Socket>(fd));
   }
 }
 
@@ -200,7 +98,7 @@ Close `socket`, this terminates the connection to its peer if it had one.
 -/
 alloy c extern "lean_close_socket"
 def close (socket : @& Socket) : IO Unit := {
-  int fd = *lean_to_socket(socket);
+  int fd = *of_lean<Socket>(socket);
   if (close(fd) < 0) {
     return lean_io_result_mk_error(lean_decode_io_error(errno, NULL));
   } else {
@@ -208,9 +106,32 @@ def close (socket : @& Socket) : IO Unit := {
   }
 }
 
-alloy c alloc SockAddr4 = struct sockaddr_in as g_sockaddr_in_external_class translators lean_to_sockaddr_in ↔ sockaddr_in_to_lean  finalize sockaddr_in_finalize
-alloy c alloc SockAddr6 = struct sockaddr_in6 as g_sockaddr_in6_external_class translators lean_to_sockaddr_in6 ↔ sockaddr_in6_to_lean finalize sockaddr_in6_finalize
-alloy c alloc SockAddrUnix = struct sockaddr_un as g_sockaddr_un_external_class translators lean_to_sockaddr_un ↔ sockaddr_un_to_lean  finalize sockaddr_un_finalize
+alloy c section
+static void sockaddr_in_finalize(void* ptr) {
+  free((struct sockaddr_in*)ptr);
+}
+static void sockaddr_in6_finalize(void* ptr) {
+  free((struct sockaddr_in6*)ptr);
+}
+static void sockaddr_un_finalize(void* ptr) {
+  free((struct sockaddr_un*)ptr);
+}
+end
+
+alloy c extern_type SockAddr4 => struct sockaddr_in := {
+  finalize := `sockaddr_in_finalize
+  foreach := `noop_foreach
+}
+
+alloy c extern_type SockAddr6 => struct sockaddr_in6 := {
+  finalize := `sockaddr_in6_finalize
+  foreach := `noop_foreach
+}
+
+alloy c extern_type SockAddrUnix => struct sockaddr_un := {
+  finalize := `sockaddr_un_finalize
+  foreach := `noop_foreach
+}
 
 -- TODO: ToString/FromString
 /--
@@ -249,7 +170,6 @@ def IPv6Addr.mk (h1 h2 h3 h4 h5 h6 h7 h8 : UInt16) : IPv6Addr := Id.run do
   arr := push16 h8 arr
   return  ⟨arr, sorry⟩
 
-
 /--
 Create an IPv4 socket address from:
 - an IPv4 address
@@ -264,7 +184,7 @@ def SockAddr4.v4 (ip : IPv4Addr) (port : UInt16) : SockAddr4 := {
   sa->sin_family = AF_INET;
   sa->sin_port = htons(port);
   sa->sin_addr.s_addr = htonl(ip);
-  return sockaddr_in_to_lean(sa);
+  return to_lean<SockAddr4>(sa);
 }
 
 /--
@@ -285,7 +205,7 @@ def SockAddr6.v6 (ip : @& IPv6Addr) (port : UInt16) (flowinfo : UInt32 := 0) (sc
   sa->sin6_flowinfo = htonl(flowinfo);
   memcpy(sa->sin6_addr.s6_addr, lean_sarray_cptr(ip), 16);
   sa->sin6_scope_id = scopeId;
-  return sockaddr_in6_to_lean(sa);
+  return to_lean<SockAddr6>(sa);
 }
 
 /--
@@ -299,7 +219,7 @@ def SockAddrUnix.unix (path : @& System.FilePath) : SockAddrUnix := {
   struct sockaddr_un* sa = malloc(sizeof(struct sockaddr_un));
   sa->sun_family = AF_UNIX;
   strncpy(sa->sun_path, lean_string_cstr(path), sizeof(sa->sun_path) - 1);
-  return sockaddr_un_to_lean(sa);
+  return to_lean<SockAddrUnix>(sa);
 }
 
 /--
@@ -329,19 +249,16 @@ instance : Coe SockAddrUnix SockAddr where
   coe sa := .unixAddr sa
 
 alloy c extern "lean_sockaddr_in_family"
-def SockAddr4.family (addr : @& SockAddr4) : AddressFamily := {
-  return (lean_to_sockaddr_in(lean_ctor_get(addr, 0)))->sin_family;
-}
+def SockAddr4.family (addr : @& SockAddr4) : AddressFamily :=
+  return of_lean<SockAddr4>(lean_ctor_get(addr, 0))->sin_family;
 
 alloy c extern "lean_sockaddr_in6_family"
-def SockAddr6.family (addr : @& SockAddr6) : AddressFamily := {
-  return (lean_to_sockaddr_in6(lean_ctor_get(addr, 0)))->sin6_family;
-}
+def SockAddr6.family (addr : @& SockAddr6) : AddressFamily :=
+  return of_lean<SockAddr6>(lean_ctor_get(addr, 0))->sin6_family;
 
 alloy c extern "lean_sockaddr_un_family"
-def SockAddrUnix.family (addr : @& SockAddrUnix) : AddressFamily := {
-  return (lean_to_sockaddr_un(lean_ctor_get(addr, 0)))->sun_family;
-}
+def SockAddrUnix.family (addr : @& SockAddrUnix) : AddressFamily :=
+  return of_lean<SockAddrUnix>(lean_ctor_get(addr, 0))->sun_family;
 
 /--
 Get the `AddressFamily` of a `SockAddr`.
@@ -351,18 +268,16 @@ def SockAddr.family (addr : SockAddr) : AddressFamily :=
   | .v4Addr sa | .v6Addr sa | .unixAddr sa => sa.family
 
 alloy c extern "lean_sockaddr_in_port"
-def SockAddr4.port (addr : @& SockAddr4) : UInt16 := {
-  return ntohs((lean_to_sockaddr_in(addr))->sin_port);
-}
+def SockAddr4.port (addr : @& SockAddr4) : UInt16 :=
+  return ntohs(of_lean<SockAddr4>(addr)->sin_port);
 
 alloy c extern "lean_sockaddr_in6_port"
-def SockAddr6.port (addr : @& SockAddr6) : UInt16 := {
-  return ntohs((lean_to_sockaddr_in6(addr))->sin6_port);
-}
+def SockAddr6.port (addr : @& SockAddr6) : UInt16 :=
+  return ntohs(of_lean<SockAddr6>(addr)->sin6_port);
 
 /--
 Get the port of a `SockAddr`. This is not a total function
-as UNIX domain socket addresses do not have a port. 
+as UNIX domain socket addresses do not have a port.
 -/
 def SockAddr.port? (addr : SockAddr) : Option UInt16 :=
   match addr with
@@ -372,20 +287,20 @@ def SockAddr.port? (addr : SockAddr) : Option UInt16 :=
 alloy c extern "lean_sockaddr_in_addr"
 def SockAddr4.addr (addr : @& SockAddr4) : String := {
   char string[INET_ADDRSTRLEN];
-  inet_ntop(AF_INET, &(lean_to_sockaddr_in(addr))->sin_addr, string, INET_ADDRSTRLEN);
+  inet_ntop(AF_INET, &of_lean<SockAddr4>(addr)->sin_addr, string, INET_ADDRSTRLEN);
   return lean_mk_string(string);
 }
 
 alloy c extern "lean_sockaddr_in6_addr"
 def SockAddr6.addr (addr : @& SockAddr6) : String := {
   char string[INET6_ADDRSTRLEN];
-  inet_ntop(AF_INET6, &(lean_to_sockaddr_in6(addr))->sin6_addr, string, INET6_ADDRSTRLEN);
+  inet_ntop(AF_INET6, &of_lean<SockAddr6>(addr)->sin6_addr, string, INET6_ADDRSTRLEN);
   return lean_mk_string(string);
 }
 
 alloy c extern "lean_sockaddr_un_addr"
 def SockAddrUnix.addr (addr : @& SockAddrUnix) : String := {
-  struct sockaddr_un* sun = lean_to_sockaddr_un(addr);
+  struct sockaddr_un* sun = of_lean<SockAddrUnix>(addr);
   char string[sizeof(sun->sun_path)];
   inet_ntop(AF_UNIX, &sun->sun_path, string, sizeof(string));
   return lean_mk_string(string);
@@ -411,10 +326,10 @@ as a client which can
 -/
 alloy c extern "lean_socket_connect"
 def connect (socket : @& Socket) (addr : @& SockAddr) : IO Unit := {
-  int fd = *lean_to_socket(socket);
+  int fd = *of_lean<Socket>(socket);
   int tag = lean_obj_tag(addr);
   int err = 0;
-  struct sockaddr* sa = (struct sockaddr *)(lean_to_sockaddr_in(lean_ctor_get(addr, 0)));
+  struct sockaddr* sa = (struct sockaddr *)(lean_get_external_data(lean_ctor_get(addr, 0)));
 
   switch (tag) {
     case 0:
@@ -439,7 +354,7 @@ Send the bytes from `buf` to the peer of `socket`.
 -/
 alloy c extern "lean_socket_send"
 def send (socket : @& Socket) (buf : @& ByteArray) : IO USize := {
-  int fd = *lean_to_socket(socket);
+  int fd = *of_lean<Socket>(socket);
   ssize_t bytes = send(fd, lean_sarray_cptr(buf), lean_sarray_size(buf), 0);
   if (bytes < 0) {
     return lean_io_result_mk_error(lean_decode_io_error(errno, NULL));
@@ -455,10 +370,10 @@ This function is similar to `Socket.connect`. However there is no need for the i
 -/
 alloy c extern "lean_socket_sendto"
 def sendto (socket : @& Socket) (buf : @& ByteArray) (addr : @& SockAddr) : IO USize := {
-  int fd = *lean_to_socket(socket);
+  int fd = *of_lean<Socket>(socket);
   int tag = lean_obj_tag(addr);
   ssize_t bytes = 0;
-  struct sockaddr* sa = (struct sockaddr *)(lean_to_sockaddr_in(lean_ctor_get(addr, 0)));
+  struct sockaddr* sa = (struct sockaddr *)(lean_get_external_data(lean_ctor_get(addr, 0)));
 
   switch (tag) {
     case 0:
@@ -498,7 +413,7 @@ Receive up to `maxBytes` bytes from the peer of `socket` in a `ByteArray`.
 -/
 alloy c extern "lean_socket_recv"
 def recv (socket : @& Socket) (maxBytes : USize) : IO ByteArray := {
-  int fd = *lean_to_socket(socket);
+  int fd = *of_lean<Socket>(socket);
   lean_object *buf = lean_alloc_sarray(1, 0, maxBytes);
   ssize_t recvBytes = recv(fd, lean_sarray_cptr(buf), maxBytes, 0);
   if (recvBytes < 0) {
@@ -518,10 +433,10 @@ The remaining two are:
 -/
 alloy c extern "lean_socket_bind"
 def bind (socket : @& Socket) (addr : @& SockAddr) : IO Unit := {
-  int fd = *lean_to_socket(socket);
+  int fd = *of_lean<Socket>(socket);
   int tag = lean_obj_tag(addr);
   int err = 0;
-  struct sockaddr* sa = (struct sockaddr *)(lean_to_sockaddr_in(lean_ctor_get(addr, 0)));
+  struct sockaddr* sa = (struct sockaddr *)(lean_get_external_data(lean_ctor_get(addr, 0)));
 
   switch (tag) {
     case 0:
@@ -551,7 +466,7 @@ This is the second in 3 steps to set `socket` use it as a server, the last one i
 -/
 alloy c extern "lean_socket_listen"
 def listen (socket : @& Socket) (backlog : UInt32) : IO Unit := {
-  int fd = *lean_to_socket(socket);
+  int fd = *of_lean<Socket>(socket);
   if (listen(fd, backlog) < 0) {
     return lean_io_result_mk_error(lean_decode_io_error(errno, NULL));
   } else {
@@ -568,7 +483,7 @@ alloy c extern "lean_socket_accept"
 def accept (socket : @& Socket) : IO (Socket × SockAddr) := {
   socklen_t saSize;
 
-  int fd = *lean_to_socket(socket);
+  int fd = *of_lean<Socket>(socket);
   int* newFd = malloc(sizeof(int));
   struct sockaddr* sa = malloc(sizeof(struct sockaddr));
 
@@ -580,20 +495,20 @@ def accept (socket : @& Socket) : IO (Socket × SockAddr) := {
     return lean_io_result_mk_error(lean_decode_io_error(errno, NULL));
   } else {
     lean_object* pair = lean_alloc_ctor(0, 2, 0);
-    lean_ctor_set(pair, 0, socket_to_lean(newFd));
+    lean_ctor_set(pair, 0, to_lean<Socket>(newFd));
     lean_object* leanSa;
     switch (sa->sa_family) {
       case AF_INET:
         leanSa = lean_alloc_ctor(0, 1, 0);
-        lean_ctor_set(leanSa, 0, sockaddr_in_to_lean((struct sockaddr_in*)sa));
+        lean_ctor_set(leanSa, 0, to_lean<SockAddr4>((struct sockaddr_in*)sa));
         break;
       case AF_INET6:
         leanSa = lean_alloc_ctor(1, 1, 0);
-        lean_ctor_set(leanSa, 0, sockaddr_in6_to_lean((struct sockaddr_in6*)sa));
+        lean_ctor_set(leanSa, 0, to_lean<SockAddr6>((struct sockaddr_in6*)sa));
         break;
       case AF_UNIX:
         leanSa = lean_alloc_ctor(2, 1, 0);
-        lean_ctor_set(leanSa, 0, sockaddr_un_to_lean((struct sockaddr_un*)sa));
+        lean_ctor_set(leanSa, 0, to_lean<SockAddrUnix>((struct sockaddr_un*)sa));
         break;
       default:
         return lean_panic_fn(lean_box(0), lean_mk_string("accept only supports INET, INET6 and UNIX right now"));
@@ -610,7 +525,7 @@ alloy c extern "lean_socket_getpeername"
 def getpeername (socket : @& Socket) : IO SockAddr := {
   socklen_t saSize;
 
-  int fd = *lean_to_socket(socket);
+  int fd = *of_lean<Socket>(socket);
   struct sockaddr* sa = malloc(sizeof(struct sockaddr));
 
   if (getpeername(fd, sa, &saSize) < 0) {
@@ -621,15 +536,15 @@ def getpeername (socket : @& Socket) : IO SockAddr := {
     switch (sa->sa_family) {
       case AF_INET:
         leanSa = lean_alloc_ctor(0, 1, 0);
-        lean_ctor_set(leanSa, 0, sockaddr_in_to_lean((struct sockaddr_in*)sa));
+        lean_ctor_set(leanSa, 0, to_lean<SockAddr4>((struct sockaddr_in*)sa));
         break;
       case AF_INET6:
         leanSa = lean_alloc_ctor(1, 1, 0);
-        lean_ctor_set(leanSa, 0, sockaddr_in6_to_lean((struct sockaddr_in6*)sa));
+        lean_ctor_set(leanSa, 0, to_lean<SockAddr6>((struct sockaddr_in6*)sa));
         break;
       case AF_UNIX:
         leanSa = lean_alloc_ctor(2, 1, 0);
-        lean_ctor_set(leanSa, 0, sockaddr_un_to_lean((struct sockaddr_un*)sa));
+        lean_ctor_set(leanSa, 0, to_lean<SockAddrUnix>((struct sockaddr_un*)sa));
         break;
       default:
         return lean_panic_fn(lean_box(0), lean_mk_string("getpeername only supports INET, INET6 and UNIX right now"));
@@ -645,7 +560,7 @@ alloy c extern "lean_socket_getsockname"
 def getsockname (socket : @& Socket) : IO SockAddr := {
   socklen_t saSize;
 
-  int fd = *lean_to_socket(socket);
+  int fd = *of_lean<Socket>(socket);
   struct sockaddr* sa = malloc(sizeof(struct sockaddr));
 
   if (getsockname(fd, sa, &saSize) < 0) {
@@ -656,15 +571,15 @@ def getsockname (socket : @& Socket) : IO SockAddr := {
     switch (sa->sa_family) {
       case AF_INET:
         leanSa = lean_alloc_ctor(0, 1, 0);
-        lean_ctor_set(leanSa, 0, sockaddr_in_to_lean((struct sockaddr_in*)sa));
+        lean_ctor_set(leanSa, 0, to_lean<SockAddr4>((struct sockaddr_in*)sa));
         break;
       case AF_INET6:
         leanSa = lean_alloc_ctor(1, 1, 0);
-        lean_ctor_set(leanSa, 0, sockaddr_in6_to_lean((struct sockaddr_in6*)sa));
+        lean_ctor_set(leanSa, 0, to_lean<SockAddr6>((struct sockaddr_in6*)sa));
         break;
       case AF_UNIX:
         leanSa = lean_alloc_ctor(2, 1, 0);
-        lean_ctor_set(leanSa, 0, sockaddr_un_to_lean((struct sockaddr_un*)sa));
+        lean_ctor_set(leanSa, 0, to_lean<SockAddrUnix>((struct sockaddr_un*)sa));
         break;
       default:
         return lean_panic_fn(lean_box(0), lean_mk_string("getsockname only supports INET, INET6 and UNIX right now"));
@@ -673,10 +588,11 @@ def getsockname (socket : @& Socket) : IO SockAddr := {
   }
 }
 
-alloy c enum ShutdownHow : int translators lean_to_socket_shutdown ↔ socket_shutdown_to_lean where
-| read = SHUT_RD
-| write = SHUT_WR
-| readWrite = SHUT_RDWR
+alloy c enum ShutdownHow => int
+| read => SHUT_RD
+| write => SHUT_WR
+| readWrite => SHUT_RDWR
+deriving Inhabited
 
 /--
 Partially or fully shutdown `socket`. Depending on the value of `how` this can deny further
@@ -684,8 +600,8 @@ writes, reads or both.
 -/
 alloy c extern "lean_socket_shutdown"
 def shutdown (socket : @& Socket) (how : ShutdownHow) : IO Unit := {
-  int fd = *lean_to_socket(socket);
-  int cHow = lean_to_socket_shutdown(how);
+  int fd = *of_lean<Socket>(socket);
+  int cHow = of_lean<ShutdownHow>(how);
 
   if (shutdown(fd, cHow) < 0) {
     return lean_io_result_mk_error(lean_decode_io_error(errno, NULL));
@@ -693,5 +609,3 @@ def shutdown (socket : @& Socket) (how : ShutdownHow) : IO Unit := {
     return lean_io_result_mk_ok(lean_box(0));
   }
 }
-
-end Socket
