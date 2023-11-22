@@ -40,7 +40,7 @@ A platform specific socket type. The usual main interaction points with this typ
 2. `Socket.connect` to use a `Socket` as a client to connect somewhere
 3. `Socket.bind`, `Socket.listen` and finally `Socket.accept` to host a server with a `Socket`
 -/
-alloy c extern_type Socket => int := {
+alloy c opaque_extern_type Socket => int := {
   foreach := `noop_foreach
   finalize := `socket_finalize
 }
@@ -118,17 +118,17 @@ static void sockaddr_un_finalize(void* ptr) {
 }
 end
 
-alloy c extern_type SockAddr4 => struct sockaddr_in := {
+alloy c opaque_extern_type SockAddr4 => struct sockaddr_in := {
   finalize := `sockaddr_in_finalize
   foreach := `noop_foreach
 }
 
-alloy c extern_type SockAddr6 => struct sockaddr_in6 := {
+alloy c opaque_extern_type SockAddr6 => struct sockaddr_in6 := {
   finalize := `sockaddr_in6_finalize
   foreach := `noop_foreach
 }
 
-alloy c extern_type SockAddrUnix => struct sockaddr_un := {
+alloy c opaque_extern_type SockAddrUnix => struct sockaddr_un := {
   finalize := `sockaddr_un_finalize
   foreach := `noop_foreach
 }
