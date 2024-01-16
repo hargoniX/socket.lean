@@ -338,6 +338,9 @@ def connect (socket : @& Socket) (addr : @& SockAddr) : IO Unit := {
     case 1:
       err = connect(fd, sa, sizeof(struct sockaddr_in6));
       break;
+    case 2:
+      err = connect(fd, sa, sizeof(struct sockaddr_un));
+      break;
     default:
       return lean_panic_fn(lean_box(0), lean_mk_string("illegal C value"));
   }
@@ -396,6 +399,16 @@ def sendto (socket : @& Socket) (buf : @& ByteArray) (addr : @& SockAddr) : IO U
         sizeof(struct sockaddr_in6)
       );
       break;
+    case 2:
+      bytes = sendto(
+        fd,
+        lean_sarray_cptr(buf),
+        lean_sarray_size(buf),
+        0,
+        sa,
+        sizeof(struct sockaddr_un)
+      );
+      break;
     default:
       return lean_panic_fn(lean_box(0), lean_mk_string("illegal C value"));
   }
@@ -444,6 +457,9 @@ def bind (socket : @& Socket) (addr : @& SockAddr) : IO Unit := {
       break;
     case 1:
       err = bind(fd, sa, sizeof(struct sockaddr_in6));
+      break;
+    case 2:
+      err = bind(fd, sa, sizeof(struct sockaddr_un));
       break;
     default:
       return lean_panic_fn(lean_box(0), lean_mk_string("illegal C value"));
