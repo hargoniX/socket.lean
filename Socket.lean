@@ -497,11 +497,11 @@ client and the `SockAddr` of the client.
 -/
 alloy c extern "lean_socket_accept"
 def accept (socket : @& Socket) : IO (Socket × SockAddr) := {
-  socklen_t saSize;
+  socklen_t saSize = sizeof(struct sockaddr);
 
   int fd = *of_lean<Socket>(socket);
   int* newFd = malloc(sizeof(int));
-  struct sockaddr* sa = malloc(sizeof(struct sockaddr));
+  struct sockaddr* sa = malloc(saSize);
 
   *newFd = accept(fd, sa, &saSize);
 
