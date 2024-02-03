@@ -574,10 +574,10 @@ Get the `SockAddr` of `socket`.
 -/
 alloy c extern "lean_socket_getsockname"
 def getsockname (socket : @& Socket) : IO SockAddr := {
-  socklen_t saSize;
+  socklen_t saSize = sizeof(struct sockaddr);
 
   int fd = *of_lean<Socket>(socket);
-  struct sockaddr* sa = malloc(sizeof(struct sockaddr));
+  struct sockaddr* sa = malloc(saSize);
 
   if (getsockname(fd, sa, &saSize) < 0) {
     free(sa);
