@@ -539,10 +539,10 @@ Get the `SockAddr` of the `Socket` connected to `socket`.
 -/
 alloy c extern "lean_socket_getpeername"
 def getpeername (socket : @& Socket) : IO SockAddr := {
-  socklen_t saSize;
+  socklen_t saSize = sizeof(struct sockaddr);
 
   int fd = *of_lean<Socket>(socket);
-  struct sockaddr* sa = malloc(sizeof(struct sockaddr));
+  struct sockaddr* sa = malloc(saSize);
 
   if (getpeername(fd, sa, &saSize) < 0) {
     free(sa);
