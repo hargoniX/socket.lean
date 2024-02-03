@@ -497,11 +497,11 @@ client and the `SockAddr` of the client.
 -/
 alloy c extern "lean_socket_accept"
 def accept (socket : @& Socket) : IO (Socket × SockAddr) := {
-  socklen_t saSize;
+  socklen_t saSize = sizeof(struct sockaddr);
 
   int fd = *of_lean<Socket>(socket);
   int* newFd = malloc(sizeof(int));
-  struct sockaddr* sa = malloc(sizeof(struct sockaddr));
+  struct sockaddr* sa = malloc(saSize);
 
   *newFd = accept(fd, sa, &saSize);
 
@@ -539,10 +539,10 @@ Get the `SockAddr` of the `Socket` connected to `socket`.
 -/
 alloy c extern "lean_socket_getpeername"
 def getpeername (socket : @& Socket) : IO SockAddr := {
-  socklen_t saSize;
+  socklen_t saSize = sizeof(struct sockaddr);
 
   int fd = *of_lean<Socket>(socket);
-  struct sockaddr* sa = malloc(sizeof(struct sockaddr));
+  struct sockaddr* sa = malloc(saSize);
 
   if (getpeername(fd, sa, &saSize) < 0) {
     free(sa);
@@ -574,10 +574,10 @@ Get the `SockAddr` of `socket`.
 -/
 alloy c extern "lean_socket_getsockname"
 def getsockname (socket : @& Socket) : IO SockAddr := {
-  socklen_t saSize;
+  socklen_t saSize = sizeof(struct sockaddr);
 
   int fd = *of_lean<Socket>(socket);
-  struct sockaddr* sa = malloc(sizeof(struct sockaddr));
+  struct sockaddr* sa = malloc(saSize);
 
   if (getsockname(fd, sa, &saSize) < 0) {
     free(sa);
