@@ -40,10 +40,9 @@ A platform specific socket type. The usual main interaction points with this typ
 2. `Socket.connect` to use a `Socket` as a client to connect somewhere
 3. `Socket.bind`, `Socket.listen` and finally `Socket.accept` to host a server with a `Socket`
 -/
-alloy c opaque_extern_type Socket => int := {
-  foreach := `noop_foreach
-  finalize := `socket_finalize
-}
+alloy c opaque_extern_type Socket => int where
+  foreach => "noop_foreach"
+  finalize => "socket_finalize"
 
 namespace Socket
 
@@ -118,20 +117,18 @@ static void sockaddr_un_finalize(void* ptr) {
 }
 end
 
-alloy c opaque_extern_type SockAddr4 => struct sockaddr_in := {
-  finalize := `sockaddr_in_finalize
-  foreach := `noop_foreach
-}
+alloy c opaque_extern_type SockAddr4 => struct sockaddr_in where
+  finalize => "sockaddr_in_finalize"
+  foreach => "noop_foreach"
 
-alloy c opaque_extern_type SockAddr6 => struct sockaddr_in6 := {
-  finalize := `sockaddr_in6_finalize
-  foreach := `noop_foreach
-}
 
-alloy c opaque_extern_type SockAddrUnix => struct sockaddr_un := {
-  finalize := `sockaddr_un_finalize
-  foreach := `noop_foreach
-}
+alloy c opaque_extern_type SockAddr6 => struct sockaddr_in6 where
+  finalize => "sockaddr_in6_finalize"
+  foreach => "noop_foreach"
+
+alloy c opaque_extern_type SockAddrUnix => struct sockaddr_un where
+  finalize => "sockaddr_un_finalize"
+  foreach => "noop_foreach"
 
 -- TODO: ToString/FromString
 /--
