@@ -165,7 +165,7 @@ def IPv6Addr.mk (h1 h2 h3 h4 h5 h6 h7 h8 : UInt16) : IPv6Addr := Id.run do
   arr := push16 h6 arr
   arr := push16 h7 arr
   arr := push16 h8 arr
-  return  ⟨arr, sorry⟩
+  return  ⟨arr, by trivial⟩
 
 /--
 Create an IPv4 socket address from:
