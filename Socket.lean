@@ -673,3 +673,21 @@ def shutdown (socket : @& Socket) (how : ShutdownHow) : IO Unit := {
     return lean_io_result_mk_ok(lean_box(0));
   }
 }
+
+-- TODO: refactor once alloy gets `unsafe`
+
+private alloy c extern "lean_socket_fd"
+def _getFd (socket : @& Socket) : IO UInt32 := {
+  struct socket_wrapper* sock = of_lean<Socket>(socket);
+  if (sock->closed) {
+    return lean_io_result_mk_error(lean_decode_io_error(EBADF, NULL));
+  }
+  return lean_io_result_mk_ok(lean_box_uint32((uint32_t)sock->fd));
+}
+
+/--
+Get the underlying file descriptor. This API is safe iff:
+1. You make sure to keep `socket` alive while using the file descriptor.
+2. You do not `close` or otherwise invalidate the file descriptor.
+-/
+unsafe def getFd (socket : @& Socket) : IO UInt32 := _getFd socket
