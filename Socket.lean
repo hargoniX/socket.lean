@@ -7,6 +7,7 @@ alloy c section
 #include <lean/lean.h>
 #include <string.h>
 #include <fcntl.h>
+#include <stdbool.h>
 
 #ifdef _WIN32
 
@@ -26,10 +27,17 @@ alloy c section
 
 static inline void noop_foreach(void *mod, b_lean_obj_arg fn) {}
 
+struct socket_wrapper {
+  int fd;
+  bool closed;
+};
+
 static void socket_finalize(void* ptr) {
-  int* fd = (int*)ptr;
-  close(*fd);
-  free(fd);
+  struct socket_wrapper* sock = (struct socket_wrapper*)ptr;
+  if (!sock->closed) {
+    close(sock->fd);
+  }
+  free(sock);
 }
 
 end
@@ -40,7 +48,7 @@ A platform specific socket type. The usual main interaction points with this typ
 2. `Socket.connect` to use a `Socket` as a client to connect somewhere
 3. `Socket.bind`, `Socket.listen` and finally `Socket.accept` to host a server with a `Socket`
 -/
-alloy c opaque_extern_type Socket => int where
+alloy c opaque_extern_type Socket => struct socket_wrapper where
   foreach => "noop_foreach"
   finalize => "socket_finalize"
 
@@ -76,32 +84,41 @@ alloy c extern "lean_mk_socket"
 def mk (family : @& AddressFamily) (type : @& Typ) (blocking : Bool := true) : IO Socket := {
   int af = of_lean<AddressFamily>(family);
   int typ = of_lean<Typ>(type);
-  int* fd = malloc(sizeof(int));
-  *fd = socket(af, typ, 0);
-  if (*fd < 0) {
-    free(fd);
+  struct socket_wrapper* sock = malloc(sizeof(struct socket_wrapper));
+  sock->closed = false;
+  sock->fd = socket(af, typ, 0);
+  if (sock->fd < 0) {
+    free(sock);
     return lean_io_result_mk_error(lean_decode_io_error(errno, NULL));
   } else {
     if (blocking == 0) {
-      if(fcntl(*fd, O_NONBLOCK) < 0) {
-        free(fd);
+      if(fcntl(sock->fd, O_NONBLOCK) < 0) {
+        free(sock);
         return lean_io_result_mk_error(lean_decode_io_error(errno, NULL));
       }
     }
-    return lean_io_result_mk_ok(to_lean<Socket>(fd));
+    return lean_io_result_mk_ok(to_lean<Socket>(sock));
   }
 }
 
 /--
 Close `socket`, this terminates the connection to its peer if it had one.
+Closing a `Socket` means that it will be unusable for further operations as
+its file descriptor gets invalidated. Thus any further operation on a closed
+`Socket`, including closing it again, will throw an error.
 -/
 alloy c extern "lean_close_socket"
 def close (socket : @& Socket) : IO Unit := {
-  int fd = *of_lean<Socket>(socket);
-  if (close(fd) < 0) {
-    return lean_io_result_mk_error(lean_decode_io_error(errno, NULL));
+  struct socket_wrapper* sock = of_lean<Socket>(socket);
+  if (sock->closed) {
+    return lean_io_result_mk_error(lean_decode_io_error(EBADF, NULL));
   } else {
-    return lean_io_result_mk_ok(lean_box(0));
+    if (close(sock->fd) < 0) {
+      return lean_io_result_mk_error(lean_decode_io_error(errno, NULL));
+    } else {
+      sock->closed = true;
+      return lean_io_result_mk_ok(lean_box(0));
+    }
   }
 }
 
@@ -323,20 +340,24 @@ as a client which can
 -/
 alloy c extern "lean_socket_connect"
 def connect (socket : @& Socket) (addr : @& SockAddr) : IO Unit := {
-  int fd = *of_lean<Socket>(socket);
+  struct socket_wrapper* sock = of_lean<Socket>(socket);
+  if (sock->closed) {
+    return lean_io_result_mk_error(lean_decode_io_error(EBADF, NULL));
+  }
+
   int tag = lean_obj_tag(addr);
   int err = 0;
   struct sockaddr* sa = (struct sockaddr *)(lean_get_external_data(lean_ctor_get(addr, 0)));
 
   switch (tag) {
     case 0:
-      err = connect(fd, sa, sizeof(struct sockaddr_in));
+      err = connect(sock->fd, sa, sizeof(struct sockaddr_in));
       break;
     case 1:
-      err = connect(fd, sa, sizeof(struct sockaddr_in6));
+      err = connect(sock->fd, sa, sizeof(struct sockaddr_in6));
       break;
     case 2:
-      err = connect(fd, sa, sizeof(struct sockaddr_un));
+      err = connect(sock->fd, sa, sizeof(struct sockaddr_un));
       break;
     default:
       return lean_panic_fn(lean_box(0), lean_mk_string("illegal C value"));
@@ -354,8 +375,12 @@ Send the bytes from `buf` to the peer of `socket`.
 -/
 alloy c extern "lean_socket_send"
 def send (socket : @& Socket) (buf : @& ByteArray) : IO USize := {
-  int fd = *of_lean<Socket>(socket);
-  ssize_t bytes = send(fd, lean_sarray_cptr(buf), lean_sarray_size(buf), 0);
+  struct socket_wrapper* sock = of_lean<Socket>(socket);
+  if (sock->closed) {
+    return lean_io_result_mk_error(lean_decode_io_error(EBADF, NULL));
+  }
+
+  ssize_t bytes = send(sock->fd, lean_sarray_cptr(buf), lean_sarray_size(buf), 0);
   if (bytes < 0) {
     return lean_io_result_mk_error(lean_decode_io_error(errno, NULL));
   } else {
@@ -370,7 +395,10 @@ This function is similar to `Socket.connect`. However there is no need for the i
 -/
 alloy c extern "lean_socket_sendto"
 def sendto (socket : @& Socket) (buf : @& ByteArray) (addr : @& SockAddr) : IO USize := {
-  int fd = *of_lean<Socket>(socket);
+  struct socket_wrapper* sock = of_lean<Socket>(socket);
+  if (sock->closed) {
+    return lean_io_result_mk_error(lean_decode_io_error(EBADF, NULL));
+  }
   int tag = lean_obj_tag(addr);
   ssize_t bytes = 0;
   struct sockaddr* sa = (struct sockaddr *)(lean_get_external_data(lean_ctor_get(addr, 0)));
@@ -378,7 +406,7 @@ def sendto (socket : @& Socket) (buf : @& ByteArray) (addr : @& SockAddr) : IO U
   switch (tag) {
     case 0:
       bytes = sendto(
-        fd,
+        sock->fd,
         lean_sarray_cptr(buf),
         lean_sarray_size(buf),
         0,
@@ -388,7 +416,7 @@ def sendto (socket : @& Socket) (buf : @& ByteArray) (addr : @& SockAddr) : IO U
       break;
     case 1:
       bytes = sendto(
-        fd,
+        sock->fd,
         lean_sarray_cptr(buf),
         lean_sarray_size(buf),
         0,
@@ -398,7 +426,7 @@ def sendto (socket : @& Socket) (buf : @& ByteArray) (addr : @& SockAddr) : IO U
       break;
     case 2:
       bytes = sendto(
-        fd,
+        sock->fd,
         lean_sarray_cptr(buf),
         lean_sarray_size(buf),
         0,
@@ -423,9 +451,12 @@ Receive up to `maxBytes` bytes from the peer of `socket` in a `ByteArray`.
 -/
 alloy c extern "lean_socket_recv"
 def recv (socket : @& Socket) (maxBytes : USize) : IO ByteArray := {
-  int fd = *of_lean<Socket>(socket);
+  struct socket_wrapper* sock = of_lean<Socket>(socket);
+  if (sock->closed) {
+    return lean_io_result_mk_error(lean_decode_io_error(EBADF, NULL));
+  }
   lean_object *buf = lean_alloc_sarray(1, 0, maxBytes);
-  ssize_t recvBytes = recv(fd, lean_sarray_cptr(buf), maxBytes, 0);
+  ssize_t recvBytes = recv(sock->fd, lean_sarray_cptr(buf), maxBytes, 0);
   if (recvBytes < 0) {
       return lean_io_result_mk_error(lean_decode_io_error(errno, NULL));
   } else {
@@ -443,20 +474,23 @@ The remaining two are:
 -/
 alloy c extern "lean_socket_bind"
 def bind (socket : @& Socket) (addr : @& SockAddr) : IO Unit := {
-  int fd = *of_lean<Socket>(socket);
+  struct socket_wrapper* sock = of_lean<Socket>(socket);
+  if (sock->closed) {
+    return lean_io_result_mk_error(lean_decode_io_error(EBADF, NULL));
+  }
   int tag = lean_obj_tag(addr);
   int err = 0;
   struct sockaddr* sa = (struct sockaddr *)(lean_get_external_data(lean_ctor_get(addr, 0)));
 
   switch (tag) {
     case 0:
-      err = bind(fd, sa, sizeof(struct sockaddr_in));
+      err = bind(sock->fd, sa, sizeof(struct sockaddr_in));
       break;
     case 1:
-      err = bind(fd, sa, sizeof(struct sockaddr_in6));
+      err = bind(sock->fd, sa, sizeof(struct sockaddr_in6));
       break;
     case 2:
-      err = bind(fd, sa, sizeof(struct sockaddr_un));
+      err = bind(sock->fd, sa, sizeof(struct sockaddr_un));
       break;
     default:
       return lean_panic_fn(lean_box(0), lean_mk_string("illegal C value"));
@@ -479,8 +513,11 @@ This is the second in 3 steps to set `socket` use it as a server, the last one i
 -/
 alloy c extern "lean_socket_listen"
 def listen (socket : @& Socket) (backlog : UInt32) : IO Unit := {
-  int fd = *of_lean<Socket>(socket);
-  if (listen(fd, backlog) < 0) {
+  struct socket_wrapper* sock = of_lean<Socket>(socket);
+  if (sock->closed) {
+    return lean_io_result_mk_error(lean_decode_io_error(EBADF, NULL));
+  }
+  if (listen(sock->fd, backlog) < 0) {
     return lean_io_result_mk_error(lean_decode_io_error(errno, NULL));
   } else {
     return lean_io_result_mk_ok(lean_box(0));
@@ -496,19 +533,24 @@ alloy c extern "lean_socket_accept"
 def accept (socket : @& Socket) : IO (Socket × SockAddr) := {
   socklen_t saSize = sizeof(struct sockaddr);
 
-  int fd = *of_lean<Socket>(socket);
-  int* newFd = malloc(sizeof(int));
+  struct socket_wrapper* sock = of_lean<Socket>(socket);
+  if (sock->closed) {
+    return lean_io_result_mk_error(lean_decode_io_error(EBADF, NULL));
+  }
+
+  struct socket_wrapper* newSock = malloc(sizeof(struct socket_wrapper));
+  newSock->closed = false;
   struct sockaddr* sa = malloc(saSize);
 
-  *newFd = accept(fd, sa, &saSize);
+  newSock->fd = accept(sock->fd, sa, &saSize);
 
-  if (*newFd < 0) {
+  if (newSock->fd < 0) {
     free(sa);
-    free(newFd);
+    free(newSock);
     return lean_io_result_mk_error(lean_decode_io_error(errno, NULL));
   } else {
     lean_object* pair = lean_alloc_ctor(0, 2, 0);
-    lean_ctor_set(pair, 0, to_lean<Socket>(newFd));
+    lean_ctor_set(pair, 0, to_lean<Socket>(newSock));
     lean_object* leanSa;
     switch (sa->sa_family) {
       case AF_INET:
@@ -538,10 +580,13 @@ alloy c extern "lean_socket_getpeername"
 def getpeername (socket : @& Socket) : IO SockAddr := {
   socklen_t saSize = sizeof(struct sockaddr);
 
-  int fd = *of_lean<Socket>(socket);
+  struct socket_wrapper* sock = of_lean<Socket>(socket);
+  if (sock->closed) {
+    return lean_io_result_mk_error(lean_decode_io_error(EBADF, NULL));
+  }
   struct sockaddr* sa = malloc(saSize);
 
-  if (getpeername(fd, sa, &saSize) < 0) {
+  if (getpeername(sock->fd, sa, &saSize) < 0) {
     free(sa);
     return lean_io_result_mk_error(lean_decode_io_error(errno, NULL));
   } else {
@@ -573,10 +618,13 @@ alloy c extern "lean_socket_getsockname"
 def getsockname (socket : @& Socket) : IO SockAddr := {
   socklen_t saSize = sizeof(struct sockaddr);
 
-  int fd = *of_lean<Socket>(socket);
+  struct socket_wrapper* sock = of_lean<Socket>(socket);
+  if (sock->closed) {
+    return lean_io_result_mk_error(lean_decode_io_error(EBADF, NULL));
+  }
   struct sockaddr* sa = malloc(saSize);
 
-  if (getsockname(fd, sa, &saSize) < 0) {
+  if (getsockname(sock->fd, sa, &saSize) < 0) {
     free(sa);
     return lean_io_result_mk_error(lean_decode_io_error(errno, NULL));
   } else {
@@ -613,10 +661,13 @@ writes, reads or both.
 -/
 alloy c extern "lean_socket_shutdown"
 def shutdown (socket : @& Socket) (how : ShutdownHow) : IO Unit := {
-  int fd = *of_lean<Socket>(socket);
+  struct socket_wrapper* sock = of_lean<Socket>(socket);
+  if (sock->closed) {
+    return lean_io_result_mk_error(lean_decode_io_error(EBADF, NULL));
+  }
   int cHow = of_lean<ShutdownHow>(how);
 
-  if (shutdown(fd, cHow) < 0) {
+  if (shutdown(sock->fd, cHow) < 0) {
     return lean_io_result_mk_error(lean_decode_io_error(errno, NULL));
   } else {
     return lean_io_result_mk_ok(lean_box(0));
