@@ -105,6 +105,16 @@ def close (socket : @& Socket) : IO Unit := {
   }
 }
 
+/--
+Get the underlying file descriptior. Use with caution, specifically make sure
+you keep `Socket` alive while using the file descriptor.
+-/
+alloy c extern "lean_socket_fd"
+def getFd (socket : @& Socket) : UInt32 := {
+  int fd = *of_lean<Socket>(socket);
+  return (uint32_t)fd;
+}
+
 alloy c section
 static void sockaddr_in_finalize(void* ptr) {
   free((struct sockaddr_in*)ptr);
