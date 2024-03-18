@@ -25,20 +25,10 @@ alloy c section
 
 #endif -- _WIN32
 
-static inline void noop_foreach(void *mod, b_lean_obj_arg fn) {}
-
 struct socket_wrapper {
   int fd;
   bool closed;
 };
-
-static void socket_finalize(void* ptr) {
-  struct socket_wrapper* sock = (struct socket_wrapper*)ptr;
-  if (!sock->closed) {
-    close(sock->fd);
-  }
-  free(sock);
-}
 
 end
 
@@ -49,8 +39,12 @@ A platform specific socket type. The usual main interaction points with this typ
 3. `Socket.bind`, `Socket.listen` and finally `Socket.accept` to host a server with a `Socket`
 -/
 alloy c opaque_extern_type Socket => struct socket_wrapper where
-  foreach => "noop_foreach"
-  finalize => "socket_finalize"
+  finalize(ptr) :=
+    struct socket_wrapper* sock = (struct socket_wrapper*)ptr;
+    if (!sock->closed) {
+      close(sock->fd);
+    }
+    free(sock);
 
 namespace Socket
 
@@ -81,7 +75,7 @@ A `Socket` is automatically closed once Lean decides to free it so you
 do not necessarily have to take care of this.
 -/
 alloy c extern "lean_mk_socket"
-def mk (family : @& AddressFamily) (type : @& Typ) (blocking : Bool := true) : IO Socket := {
+def mk (family : @& AddressFamily) (type : @& Typ) (blocking : Bool := true) : IO Socket :=
   int af = of_lean<AddressFamily>(family);
   int typ = of_lean<Typ>(type);
   struct socket_wrapper* sock = malloc(sizeof(struct socket_wrapper));
@@ -99,7 +93,6 @@ def mk (family : @& AddressFamily) (type : @& Typ) (blocking : Bool := true) : I
     }
     return lean_io_result_mk_ok(to_lean<Socket>(sock));
   }
-}
 
 /--
 Close `socket`, this terminates the connection to its peer if it had one.
@@ -108,7 +101,7 @@ its file descriptor gets invalidated. Thus any further operation on a closed
 `Socket`, including closing it again, will throw an error.
 -/
 alloy c extern "lean_close_socket"
-def close (socket : @& Socket) : IO Unit := {
+def close (socket : @& Socket) : IO Unit :=
   struct socket_wrapper* sock = of_lean<Socket>(socket);
   if (sock->closed) {
     return lean_io_result_mk_error(lean_decode_io_error(EBADF, NULL));
@@ -120,32 +113,15 @@ def close (socket : @& Socket) : IO Unit := {
       return lean_io_result_mk_ok(lean_box(0));
     }
   }
-}
-
-alloy c section
-static void sockaddr_in_finalize(void* ptr) {
-  free((struct sockaddr_in*)ptr);
-}
-static void sockaddr_in6_finalize(void* ptr) {
-  free((struct sockaddr_in6*)ptr);
-}
-static void sockaddr_un_finalize(void* ptr) {
-  free((struct sockaddr_un*)ptr);
-}
-end
 
 alloy c opaque_extern_type SockAddr4 => struct sockaddr_in where
-  finalize => "sockaddr_in_finalize"
-  foreach => "noop_foreach"
-
+  finalize(ptr) := free(ptr)
 
 alloy c opaque_extern_type SockAddr6 => struct sockaddr_in6 where
-  finalize => "sockaddr_in6_finalize"
-  foreach => "noop_foreach"
+  finalize(ptr) := free(ptr)
 
 alloy c opaque_extern_type SockAddrUnix => struct sockaddr_un where
-  finalize => "sockaddr_un_finalize"
-  foreach => "noop_foreach"
+  finalize(ptr) := free(ptr)
 
 -- TODO: ToString/FromString
 /--
@@ -193,13 +169,12 @@ Create an IPv4 socket address from:
 to call the `SockAddr.v4Addr` constructor by hand.
 -/
 alloy c extern "lean_mk_sockaddr_in"
-def SockAddr4.v4 (ip : IPv4Addr) (port : UInt16) : SockAddr4 := {
+def SockAddr4.v4 (ip : IPv4Addr) (port : UInt16) : SockAddr4 :=
   struct sockaddr_in* sa = malloc(sizeof(struct sockaddr_in));
   sa->sin_family = AF_INET;
   sa->sin_port = htons(port);
   sa->sin_addr.s_addr = htonl(ip);
   return to_lean<SockAddr4>(sa);
-}
 
 /--
 Create an IPv6 socket address from
@@ -212,7 +187,7 @@ Create an IPv6 socket address from
 to call the `SockAddr.v6Addr` constructor by hand.
 -/
 alloy c extern "lean_mk_sockaddr_in6"
-def SockAddr6.v6 (ip : @& IPv6Addr) (port : UInt16) (flowinfo : UInt32 := 0) (scopeId : UInt32 := 0) : SockAddr6 := {
+def SockAddr6.v6 (ip : @& IPv6Addr) (port : UInt16) (flowinfo : UInt32 := 0) (scopeId : UInt32 := 0) : SockAddr6 :=
   struct sockaddr_in6* sa = malloc(sizeof(struct sockaddr_in6));
   sa->sin6_family = AF_INET6;
   sa->sin6_port = htons(port);
@@ -220,7 +195,6 @@ def SockAddr6.v6 (ip : @& IPv6Addr) (port : UInt16) (flowinfo : UInt32 := 0) (sc
   memcpy(sa->sin6_addr.s6_addr, lean_sarray_cptr(ip), 16);
   sa->sin6_scope_id = scopeId;
   return to_lean<SockAddr6>(sa);
-}
 
 /--
 Create a UNIX domain socket address from a file path.
@@ -229,12 +203,11 @@ Create a UNIX domain socket address from a file path.
 to call the `SockAddr.unixAddr` constructor by hand.
 -/
 alloy c extern "lean_mk_sockaddr_un"
-def SockAddrUnix.unix (path : @& System.FilePath) : SockAddrUnix := {
+def SockAddrUnix.unix (path : @& System.FilePath) : SockAddrUnix :=
   struct sockaddr_un* sa = malloc(sizeof(struct sockaddr_un));
   sa->sun_family = AF_UNIX;
   strncpy(sa->sun_path, lean_string_cstr(path), sizeof(sa->sun_path) - 1);
   return to_lean<SockAddrUnix>(sa);
-}
 
 /--
 An address that can be used by a `Socket` to identify its peers.
@@ -299,26 +272,23 @@ def SockAddr.port? (addr : SockAddr) : Option UInt16 :=
   | .unixAddr .. => none
 
 alloy c extern "lean_sockaddr_in_addr"
-def SockAddr4.addr (addr : @& SockAddr4) : String := {
+def SockAddr4.addr (addr : @& SockAddr4) : String :=
   char string[INET_ADDRSTRLEN];
   inet_ntop(AF_INET, &of_lean<SockAddr4>(addr)->sin_addr, string, INET_ADDRSTRLEN);
   return lean_mk_string(string);
-}
 
 alloy c extern "lean_sockaddr_in6_addr"
-def SockAddr6.addr (addr : @& SockAddr6) : String := {
+def SockAddr6.addr (addr : @& SockAddr6) : String :=
   char string[INET6_ADDRSTRLEN];
   inet_ntop(AF_INET6, &of_lean<SockAddr6>(addr)->sin6_addr, string, INET6_ADDRSTRLEN);
   return lean_mk_string(string);
-}
 
 alloy c extern "lean_sockaddr_un_addr"
-def SockAddrUnix.addr (addr : @& SockAddrUnix) : String := {
+def SockAddrUnix.addr (addr : @& SockAddrUnix) : String :=
   struct sockaddr_un* sun = of_lean<SockAddrUnix>(addr);
   char string[sizeof(sun->sun_path)];
   inet_ntop(AF_UNIX, &sun->sun_path, string, sizeof(string));
   return lean_mk_string(string);
-}
 
 /--
 Get the actual address behind a `SockAddr` as a string.
@@ -339,7 +309,7 @@ as a client which can
 - close the connection using `Socket.close`
 -/
 alloy c extern "lean_socket_connect"
-def connect (socket : @& Socket) (addr : @& SockAddr) : IO Unit := {
+def connect (socket : @& Socket) (addr : @& SockAddr) : IO Unit :=
   struct socket_wrapper* sock = of_lean<Socket>(socket);
   if (sock->closed) {
     return lean_io_result_mk_error(lean_decode_io_error(EBADF, NULL));
@@ -368,13 +338,12 @@ def connect (socket : @& Socket) (addr : @& SockAddr) : IO Unit := {
   } else {
     return lean_io_result_mk_ok(lean_box(0));
   }
-}
 
 /--
 Send the bytes from `buf` to the peer of `socket`.
 -/
 alloy c extern "lean_socket_send"
-def send (socket : @& Socket) (buf : @& ByteArray) : IO USize := {
+def send (socket : @& Socket) (buf : @& ByteArray) : IO USize :=
   struct socket_wrapper* sock = of_lean<Socket>(socket);
   if (sock->closed) {
     return lean_io_result_mk_error(lean_decode_io_error(EBADF, NULL));
@@ -386,7 +355,6 @@ def send (socket : @& Socket) (buf : @& ByteArray) : IO USize := {
   } else {
     return lean_io_result_mk_ok(lean_box_usize(bytes));
   }
-}
 
 -- TOOD: support flags
 /--
@@ -394,7 +362,7 @@ This function is similar to `Socket.connect`. However there is no need for the i
 `Socket.connect` call as the address of the peer is passed in via `addr`.
 -/
 alloy c extern "lean_socket_sendto"
-def sendto (socket : @& Socket) (buf : @& ByteArray) (addr : @& SockAddr) : IO USize := {
+def sendto (socket : @& Socket) (buf : @& ByteArray) (addr : @& SockAddr) : IO USize :=
   struct socket_wrapper* sock = of_lean<Socket>(socket);
   if (sock->closed) {
     return lean_io_result_mk_error(lean_decode_io_error(EBADF, NULL));
@@ -443,14 +411,13 @@ def sendto (socket : @& Socket) (buf : @& ByteArray) (addr : @& SockAddr) : IO U
   } else {
     return lean_io_result_mk_ok(lean_box_usize(bytes));
   }
-}
 
 -- TODO: support flags
 /--
 Receive up to `maxBytes` bytes from the peer of `socket` in a `ByteArray`.
 -/
 alloy c extern "lean_socket_recv"
-def recv (socket : @& Socket) (maxBytes : USize) : IO ByteArray := {
+def recv (socket : @& Socket) (maxBytes : USize) : IO ByteArray :=
   struct socket_wrapper* sock = of_lean<Socket>(socket);
   if (sock->closed) {
     return lean_io_result_mk_error(lean_decode_io_error(EBADF, NULL));
@@ -464,7 +431,6 @@ def recv (socket : @& Socket) (maxBytes : USize) : IO ByteArray := {
       arrObj->m_size = recvBytes;
       return lean_io_result_mk_ok(buf);
   }
-}
 
 /--
 Bind `socket` to `addr`. This is the first in 3 steps to use it as as a server.
@@ -473,7 +439,7 @@ The remaining two are:
 2. `Socket.accept`
 -/
 alloy c extern "lean_socket_bind"
-def bind (socket : @& Socket) (addr : @& SockAddr) : IO Unit := {
+def bind (socket : @& Socket) (addr : @& SockAddr) : IO Unit :=
   struct socket_wrapper* sock = of_lean<Socket>(socket);
   if (sock->closed) {
     return lean_io_result_mk_error(lean_decode_io_error(EBADF, NULL));
@@ -501,7 +467,6 @@ def bind (socket : @& Socket) (addr : @& SockAddr) : IO Unit := {
   } else {
     return lean_io_result_mk_ok(lean_box(0));
   }
-}
 
 /--
 Let `socket` listen on the `SocketAddr` that it was previously bound to using `Socket.bind`.
@@ -512,7 +477,7 @@ connection.
 This is the second in 3 steps to set `socket` use it as a server, the last one is `Socket.accept`.
 -/
 alloy c extern "lean_socket_listen"
-def listen (socket : @& Socket) (backlog : UInt32) : IO Unit := {
+def listen (socket : @& Socket) (backlog : UInt32) : IO Unit :=
   struct socket_wrapper* sock = of_lean<Socket>(socket);
   if (sock->closed) {
     return lean_io_result_mk_error(lean_decode_io_error(EBADF, NULL));
@@ -522,7 +487,6 @@ def listen (socket : @& Socket) (backlog : UInt32) : IO Unit := {
   } else {
     return lean_io_result_mk_ok(lean_box(0));
   }
-}
 
 /--
 Wait until a new client connects to `socket` after it has been configured as a server using
@@ -530,7 +494,7 @@ Wait until a new client connects to `socket` after it has been configured as a s
 client and the `SockAddr` of the client.
 -/
 alloy c extern "lean_socket_accept"
-def accept (socket : @& Socket) : IO (Socket × SockAddr) := {
+def accept (socket : @& Socket) : IO (Socket × SockAddr) :=
   socklen_t saSize = sizeof(struct sockaddr);
 
   struct socket_wrapper* sock = of_lean<Socket>(socket);
@@ -571,13 +535,12 @@ def accept (socket : @& Socket) : IO (Socket × SockAddr) := {
     lean_ctor_set(pair, 1, leanSa);
     return lean_io_result_mk_ok(pair);
   }
-}
 
 /--
 Get the `SockAddr` of the `Socket` connected to `socket`.
 -/
 alloy c extern "lean_socket_getpeername"
-def getpeername (socket : @& Socket) : IO SockAddr := {
+def getpeername (socket : @& Socket) : IO SockAddr :=
   socklen_t saSize = sizeof(struct sockaddr);
 
   struct socket_wrapper* sock = of_lean<Socket>(socket);
@@ -609,13 +572,12 @@ def getpeername (socket : @& Socket) : IO SockAddr := {
     }
     return lean_io_result_mk_ok(leanSa);
   }
-}
 
 /--
 Get the `SockAddr` of `socket`.
 -/
 alloy c extern "lean_socket_getsockname"
-def getsockname (socket : @& Socket) : IO SockAddr := {
+def getsockname (socket : @& Socket) : IO SockAddr :=
   socklen_t saSize = sizeof(struct sockaddr);
 
   struct socket_wrapper* sock = of_lean<Socket>(socket);
@@ -647,7 +609,6 @@ def getsockname (socket : @& Socket) : IO SockAddr := {
     }
     return lean_io_result_mk_ok(leanSa);
   }
-}
 
 alloy c enum ShutdownHow => int
 | read => SHUT_RD
@@ -660,7 +621,7 @@ Partially or fully shutdown `socket`. Depending on the value of `how` this can d
 writes, reads or both.
 -/
 alloy c extern "lean_socket_shutdown"
-def shutdown (socket : @& Socket) (how : ShutdownHow) : IO Unit := {
+def shutdown (socket : @& Socket) (how : ShutdownHow) : IO Unit :=
   struct socket_wrapper* sock = of_lean<Socket>(socket);
   if (sock->closed) {
     return lean_io_result_mk_error(lean_decode_io_error(EBADF, NULL));
@@ -672,18 +633,16 @@ def shutdown (socket : @& Socket) (how : ShutdownHow) : IO Unit := {
   } else {
     return lean_io_result_mk_ok(lean_box(0));
   }
-}
 
 -- TODO: refactor once alloy gets `unsafe`
 
 private alloy c extern "lean_socket_fd"
-def _getFd (socket : @& Socket) : IO UInt32 := {
+def _getFd (socket : @& Socket) : IO UInt32 :=
   struct socket_wrapper* sock = of_lean<Socket>(socket);
   if (sock->closed) {
     return lean_io_result_mk_error(lean_decode_io_error(EBADF, NULL));
   }
   return lean_io_result_mk_ok(lean_box_uint32((uint32_t)sock->fd));
-}
 
 /--
 Get the underlying file descriptor. This API is safe iff:
