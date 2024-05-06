@@ -21,7 +21,7 @@ def client (arg : String) (input : Socket × Socket.SockAddr): IO Unit := do
   let recv ← sock.recv 4096
   if recv.size == 0 then
     return ()
-  let str := String.fromUTF8Unchecked recv
+  let str := String.fromUTF8! recv
   assert! str == arg
 
 def handle (client : Socket) : IO Unit := do
