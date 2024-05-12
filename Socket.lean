@@ -294,7 +294,7 @@ def SockAddrUnix.addr (addr : @& SockAddrUnix) : String :=
 Get the actual address behind a `SockAddr` as a string.
 This corresponds to:
 - the IPv4 address for `SockAddr4`
-- the IPv6 address for `SockAddr4`
+- the IPv6 address for `SockAddr6`
 - the file path for `SockAddrUnix`
 -/
 def SockAddr.addr (addr : SockAddr) : String :=
