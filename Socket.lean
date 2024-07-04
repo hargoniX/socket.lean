@@ -28,6 +28,10 @@ alloy c section
 struct socket_wrapper {
   int fd;
   bool closed;
+
+  -- whether the fd should be closed by finalize()
+  -- false if the fd is externally managed, eg by a parent process like systemd
+  bool owned;
 };
 
 end
@@ -41,7 +45,7 @@ A platform specific socket type. The usual main interaction points with this typ
 alloy c opaque_extern_type Socket => struct socket_wrapper where
   finalize(ptr) :=
     struct socket_wrapper* sock = (struct socket_wrapper*)ptr;
-    if (!sock->closed) {
+    if (sock->owned && !sock->closed) {
       close(sock->fd);
     }
     free(sock);
@@ -79,6 +83,7 @@ def mk (family : @& AddressFamily) (type : @& Typ) (blocking : Bool := true) : I
   int af = of_lean<AddressFamily>(family);
   int typ = of_lean<Typ>(type);
   struct socket_wrapper* sock = malloc(sizeof(struct socket_wrapper));
+  sock->owned = true;
   sock->closed = false;
   sock->fd = socket(af, typ, 0);
   if (sock->fd < 0) {
@@ -93,6 +98,36 @@ def mk (family : @& AddressFamily) (type : @& Typ) (blocking : Bool := true) : I
     }
     return lean_io_result_mk_ok(to_lean<Socket>(sock));
   }
+
+/--
+Create a `Socket` from a raw file descriptor.
+- `fd`: The file descriptor
+- `isOwned`: specifies whether the file descriptor should be considered owned by
+  the `Socket`, in which case it will be closed when the socket is finalized.
+
+WARNING: Only use this function if you know what you're doing.
+In most cases, you probably want `Socket.mk`. This function was created
+specifically for dealing with parent processes which pass sockets to our
+process via the file descriptor table. In this case, the lifecycle of the
+socket is probably managed by the parent process, so `isOwned` should be
+`false`.
+
+The implementation assumes that the provided file descriptor hasn't been closed.
+-/
+alloy c extern "lean_socket_from_fd"
+def fromFd (fd : UInt32) (isOwned : Bool := false) : IO Socket :=
+  int i_fd = (int)fd;
+
+  -- Ensure the FD is valid
+  if (fcntl(i_fd, F_GETFD) < 0) {
+      return lean_io_result_mk_error(lean_decode_io_error(errno, NULL));
+  }
+
+  struct socket_wrapper* sock = malloc(sizeof(struct socket_wrapper));
+  sock->owned = isOwned;
+  sock->closed = false;
+  sock->fd = i_fd;
+  return lean_io_result_mk_ok(to_lean<Socket>(sock));
 
 /--
 Close `socket`, this terminates the connection to its peer if it had one.
@@ -503,6 +538,7 @@ def accept (socket : @& Socket) : IO (Socket × SockAddr) :=
   }
 
   struct socket_wrapper* newSock = malloc(sizeof(struct socket_wrapper));
+  newSock->owned = true;
   newSock->closed = false;
   struct sockaddr* sa = malloc(saSize);
 
