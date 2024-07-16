@@ -2,7 +2,6 @@ import Lake
 open Lake DSL
 
 require alloy from git "https://github.com/tydeu/lean4-alloy/" @ "master"
-require std from git "https://github.com/leanprover/std4" @ "main"
 
 package «socket» { }
 
