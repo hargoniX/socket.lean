@@ -180,7 +180,7 @@ def IPv6Addr := { xs : ByteArray // xs.size = 16 }
 This creates the IPv6 address `h1:h2:h3:h4:h5:h6:h7:h8`.
 -/
 def IPv6Addr.mk (h1 h2 h3 h4 h5 h6 h7 h8 : UInt16) : IPv6Addr := Id.run do
-  let mut arr := ByteArray.mkEmpty 16
+  let mut arr := ByteArray.emptyWithCapacity 16
   let push16 (h : UInt16) (arr : ByteArray) :=
     let p1 := (h >>> 8).toUInt8
     let p2 := h.toUInt8
@@ -223,7 +223,7 @@ to call the `SockAddr.v6Addr` constructor by hand.
 -/
 alloy c extern "lean_mk_sockaddr_in6"
 def SockAddr6.v6 (ip : @& IPv6Addr) (port : UInt16) (flowinfo : UInt32 := 0) (scopeId : UInt32 := 0) : SockAddr6 :=
-  struct sockaddr_in6* sa = malloc(sizeof(struct sockaddr_in6));
+  struct sockaddr_in6* sa = (struct sockaddr_in6*) malloc(sizeof(struct sockaddr_in6));
   sa->sin6_family = AF_INET6;
   sa->sin6_port = htons(port);
   sa->sin6_flowinfo = htonl(flowinfo);
@@ -239,7 +239,7 @@ to call the `SockAddr.unixAddr` constructor by hand.
 -/
 alloy c extern "lean_mk_sockaddr_un"
 def SockAddrUnix.unix (path : @& System.FilePath) : SockAddrUnix :=
-  struct sockaddr_un* sa = malloc(sizeof(struct sockaddr_un));
+  struct sockaddr_un* sa = (struct sockaddr_un*) malloc(sizeof(struct sockaddr_un));
   sa->sun_family = AF_UNIX;
   strncpy(sa->sun_path, lean_string_cstr(path), sizeof(sa->sun_path) - 1);
   return to_lean<SockAddrUnix>(sa);
@@ -537,10 +537,10 @@ def accept (socket : @& Socket) : IO (Socket × SockAddr) :=
     return lean_io_result_mk_error(lean_decode_io_error(EBADF, NULL));
   }
 
-  struct socket_wrapper* newSock = malloc(sizeof(struct socket_wrapper));
+  struct socket_wrapper* newSock = (struct socket_wrapper*) malloc(sizeof(struct socket_wrapper));
   newSock->owned = true;
   newSock->closed = false;
-  struct sockaddr* sa = malloc(saSize);
+  struct sockaddr* sa = (struct sockaddr*) malloc(saSize);
 
   newSock->fd = accept(sock->fd, sa, &saSize);
 
@@ -583,7 +583,7 @@ def getpeername (socket : @& Socket) : IO SockAddr :=
   if (sock->closed) {
     return lean_io_result_mk_error(lean_decode_io_error(EBADF, NULL));
   }
-  struct sockaddr* sa = malloc(saSize);
+  struct sockaddr* sa = (struct sockaddr*) malloc(saSize);
 
   if (getpeername(sock->fd, sa, &saSize) < 0) {
     free(sa);
@@ -620,7 +620,7 @@ def getsockname (socket : @& Socket) : IO SockAddr :=
   if (sock->closed) {
     return lean_io_result_mk_error(lean_decode_io_error(EBADF, NULL));
   }
-  struct sockaddr* sa = malloc(saSize);
+  struct sockaddr* sa = (struct sockaddr*) malloc(saSize);
 
   if (getsockname(sock->fd, sa, &saSize) < 0) {
     free(sa);

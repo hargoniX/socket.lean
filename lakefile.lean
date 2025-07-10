@@ -1,5 +1,5 @@
 import Lake
-open Lake DSL
+open Lake DSL System
 
 require alloy from git "https://github.com/tydeu/lean4-alloy/" @ "master"
 
@@ -11,15 +11,15 @@ lean_exe socket_test {
   moreLeancArgs := #["-fPIC"]
 }
 
-module_data alloy.c.o.export : BuildJob FilePath
-module_data alloy.c.o.noexport : BuildJob FilePath
+module_data alloy.c.o.export : FilePath
+module_data alloy.c.o.noexport : FilePath
 
 lean_lib «Socket» {
   precompileModules := true
   nativeFacets := fun shouldExport =>
     if shouldExport then
-      #[Module.oExportFacet, `alloy.c.o.export]
+      #[Module.oExportFacet, `module.alloy.c.o.export]
     else
-      #[Module.oNoExportFacet, `alloy.c.o.noexport]
+      #[Module.oNoExportFacet, `module.alloy.c.o.noexport]
   moreLeancArgs := #["-fPIC"]
 }

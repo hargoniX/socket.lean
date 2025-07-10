@@ -5,7 +5,7 @@
    "type": "git",
    "subDir": null,
    "scope": "",
-   "rev": "7af65d3a57015a59ec67a2424519277a864be681",
+   "rev": "bbb9416016c4c337245caeaf6de7c80e56e613dd",
    "name": "alloy",
    "manifestFile": "lake-manifest.json",
    "inputRev": "master",

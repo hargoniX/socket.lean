@@ -41,27 +41,32 @@ def server (input : Socket × Socket.SockAddr) : IO Unit := do
   return ()
 
 def main (args : List String) : IO Unit := do
-  let mode := args.get! 0
-  if mode == "client" then do
-    let type := args.get! 1
-    if type == "v4" then
-        mkSocketV4 >>= client (args.get! 2)
-    else if type == "v6" then
-        mkSocketV6 >>= client (args.get! 2)
-    else if type == "unix" then
-        mkSocketUnix >>= client (args.get! 2)
-    else
-        mkSocketV4 >>= client type
 
-  else if mode == "server" then
-    let type := args.get! 1
-    if type == "unix" then
-      mkSocketUnix >>= server
-    else if type == "v6" then
-      mkSocketV6 >>= server
-    else
-      mkSocketV4 >>= server
+  if h:(args.length >= 1) then
 
-  else
-    IO.println "Unknown mode"
-    return ()
+    let mode := args[0]
+    if h': (mode == "client" ∧ args.length = 3) then do
+      let type := args[1]
+      if type == "v4" then
+          mkSocketV4 >>= client (args[2])
+      else if type == "v6" then
+          mkSocketV6 >>= client (args[2])
+      else if type == "unix" then
+          mkSocketUnix >>= client (args[2])
+      else
+          mkSocketV4 >>= client type
+      return ()
+
+    else if h':(mode == "server" ∧ args.length = 2) then
+      let type := args[1]
+      if type == "unix" then
+        mkSocketUnix >>= server
+      else if type == "v6" then
+        mkSocketV6 >>= server
+      else
+        mkSocketV4 >>= server
+      return ()
+
+
+  IO.println "usage: \nclient [v4/v6/unix] [IP] or server [v4/v6/unix]"
+  return ()
